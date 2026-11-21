@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Translator</title>
+</head>
+<body>
+  <h1>Video Translator</h1>
+  <p>Chinese video in, Vietnamese dubbed video out. (Placeholder UI.)</p>
+
+  <form id="upload-form" action="/jobs" method="post" enctype="multipart/form-data">
+    <input type="file" name="video" accept="video/*" required>
+    <button type="submit">Translate</button>
+  </form>
+
+  <h2>Status</h2>
+  <pre id="status">No job yet.</pre>
+</body>
+</html>

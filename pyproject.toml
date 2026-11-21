@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video-translator"
+version = "0.1.0"
+description = "Local tool that dubs Chinese videos into Vietnamese, keeping music and effects."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+asr = ["faster-whisper"]
+separation = ["demucs"]
+translation = ["openai"]
+tts = []  # TTS backends are not chosen yet
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+video-translator = "video_translator.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+video_translator = ["web/templates/*.html", "web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

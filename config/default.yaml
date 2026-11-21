@@ -1,0 +1,24 @@
+# Default configuration. Copy and edit, then pass with `--config`.
+
+# Compute device: auto (use GPU if available), cuda, or cpu.
+device: auto
+
+# Which provider implementation each AI step uses (see providers/registry.py).
+providers:
+  separation: {name: demucs, options: {model: htdemucs}}
+  asr: {name: faster_whisper, options: {model_size: large-v3}}
+  translation: {name: llm, options: {model: ""}}
+  tts: {name: placeholder, options: {}}
+
+subtitles:
+  srt: true        # write a separate .srt file
+  burn_in: false   # also burn subtitles into the video
+
+audio:
+  background_volume: 1.0   # music + effects
+  voice_volume: 1.0        # Vietnamese dub
+
+paths:
+  input_dir: data/input
+  work_dir: data/work
+  output_dir: data/output

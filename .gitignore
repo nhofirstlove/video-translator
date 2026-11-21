@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+
+# User data: keep the folders, ignore their contents
+data/input/*
+data/work/*
+data/output/*
+!data/input/.gitkeep
+!data/work/.gitkeep
+!data/output/.gitkeep
+
+# Model caches and outputs
+models/
+.cache/
+huggingface/
+outputs/
+*.onnx
+*.pt
+*.ckpt

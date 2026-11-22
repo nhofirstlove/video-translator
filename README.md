@@ -41,7 +41,7 @@ ffmpeg must be installed separately and available on your `PATH` (Windows:
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate          # Windows; on Linux/macOS: source .venv/bin/activate
+.venv\Scripts\Activate.ps1     # Windows PowerShell; on Linux/macOS: source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 ```
@@ -108,6 +108,27 @@ vieneu:
 
 ## Using it
 
+### Every time you start (Windows PowerShell)
+
+Open PowerShell and run these two lines first, before any `video-translator` command
+(`serve`, `run`, `resume`, `doctor`, ...):
+
+```powershell
+cd C:\video-translator
+.venv\Scripts\Activate.ps1
+```
+
+You should see `(.venv)` at the start of the prompt. Do this in every new PowerShell window;
+without it `video-translator` is "not recognized". Then, for example:
+
+```powershell
+video-translator serve
+```
+
+If PowerShell says running scripts is disabled, run
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once and try again (in Command Prompt use
+`.venv\Scripts\activate.bat` instead).
+
 ### 1. Check your setup
 
 ```bash
@@ -150,6 +171,8 @@ spoken keep their old voice, so change it before starting a job.
 
 ### 3. Run it: web page
 
+Activate the environment first (`.venv\Scripts\Activate.ps1`, see "Every time you start"), then:
+
 ```bash
 video-translator serve
 ```
@@ -160,6 +183,8 @@ press Approve. When it is done, download the `.mp4` and the `.srt`. A paused job
 Gemini daily quota) has a Resume button.
 
 ### 4. Run it: command line
+
+Activate the environment first (`.venv\Scripts\Activate.ps1`), then:
 
 ```bash
 video-translator run "data/input/my video.mp4"

@@ -2,10 +2,10 @@
 
 Usage::
 
-    @register("asr", "faster_whisper")
-    class FasterWhisperASR(ASRProvider): ...
+    @register("asr", "gemini")
+    class GeminiASR(ASRProvider): ...
 
-    provider_cls = get("asr", "faster_whisper")
+    provider_cls = get("asr", "gemini")
 """
 
 from __future__ import annotations

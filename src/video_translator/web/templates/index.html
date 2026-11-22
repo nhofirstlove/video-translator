@@ -4,17 +4,59 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Video Translator</title>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h1>Video Translator</h1>
-  <p>Chinese video in, Vietnamese dubbed video out. (Placeholder UI.)</p>
+  <a class="skip" href="#jobs-heading">Skip to jobs</a>
+  <header class="top">
+    <h1>Video Translator</h1>
+    <p class="sub">Chinese video in, Vietnamese dubbed video and subtitles out.</p>
+  </header>
 
-  <form id="upload-form" action="/jobs" method="post" enctype="multipart/form-data">
-    <input type="file" name="video" accept="video/*" required>
-    <button type="submit">Translate</button>
-  </form>
+  <main>
+    <section class="card" aria-labelledby="setup-heading">
+      <div class="card-head">
+        <h2 id="setup-heading">Setup check</h2>
+        <button type="button" id="setup-refresh" class="btn small">Check again</button>
+      </div>
+      <p id="setup-summary" class="muted" role="status">Checking...</p>
+      <ul id="setup-list" class="checks"></ul>
+      <p id="config-summary" class="muted small-text"></p>
+    </section>
 
-  <h2>Status</h2>
-  <pre id="status">No job yet.</pre>
+    <section class="card" aria-labelledby="upload-heading">
+      <h2 id="upload-heading">New video</h2>
+      <form id="upload-form" novalidate>
+        <input type="file" id="file-input" class="visually-hidden"
+               accept=".mp4,.mkv,.mov,.avi,.webm,.flv,.m4v,.ts,video/*">
+        <label for="file-input" id="drop-zone" class="drop">
+          <span class="drop-title">Drop a video here or <span class="link">choose a file</span></span>
+          <span class="muted small-text">mp4, mkv, mov, avi, webm, flv, m4v, ts. Long videos can take a few minutes to upload.</span>
+          <span id="file-name" class="file-name"></span>
+        </label>
+        <div class="row">
+          <button type="submit" id="upload-btn" class="btn primary" disabled>Upload and translate</button>
+        </div>
+        <div id="upload-progress-wrap" class="progress-wrap" hidden>
+          <div class="progress" role="progressbar" aria-label="Upload progress"
+               aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="upload-progress">
+            <div class="progress-bar" id="upload-bar"></div>
+          </div>
+          <span id="upload-pct" class="muted small-text"></span>
+        </div>
+        <p id="upload-error" class="error-text" role="alert"></p>
+      </form>
+    </section>
+
+    <section aria-labelledby="jobs-heading">
+      <h2 id="jobs-heading">Jobs</h2>
+      <p id="jobs-empty" class="muted" hidden>No jobs yet. Upload a video above to start.</p>
+      <div id="jobs-error" class="error-text" role="alert"></div>
+      <div id="jobs"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/static/app.js"></script>
 </body>
 </html>

@@ -14,5 +14,7 @@ class ASRProvider(ABC):
         self.options = options
 
     @abstractmethod
-    def transcribe(self, audio_path: Path, language: str = "zh") -> list[Segment]:
-        """Return timed segments with ``text_zh`` filled in."""
+    def transcribe(
+        self, audio_path: Path, language: str = "zh", duration: float | None = None
+    ) -> list[Segment]:
+        """Return timed segments (seconds from the start of ``audio_path``) with ``text_zh``."""

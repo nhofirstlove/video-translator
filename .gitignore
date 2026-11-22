@@ -31,3 +31,6 @@ outputs/
 *.onnx
 *.pt
 *.ckpt
+
+# Personal config overrides
+config/local.yaml

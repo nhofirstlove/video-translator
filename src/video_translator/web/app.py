@@ -12,13 +12,13 @@ from typing import Any
 
 from fastapi import FastAPI, File, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from video_translator.config import AppConfig, load_config
 from video_translator.models import Job
 from video_translator.synth_line import TTSFactory
 from video_translator.web import editor_api
+from video_translator.web.assets import NoCacheStaticFiles, add_versions
 from video_translator.web.jobs import (
     InvalidEdit,
     JobError,
@@ -96,7 +96,9 @@ def create_app(
     app = FastAPI(title="video-translator")
     app.state.config = config
     app.state.jobs = manager
-    app.mount("/static", StaticFiles(directory=WEB_DIR / "static", check_dir=False), name="static")
+    app.mount(
+        "/static", NoCacheStaticFiles(directory=WEB_DIR / "static", check_dir=False), name="static"
+    )
 
     @app.exception_handler(JobError)
     async def job_error_handler(request: Request, exc: JobError) -> JSONResponse:
@@ -137,7 +139,8 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return (WEB_DIR / "templates" / "index.html").read_text(encoding="utf-8")
+        page = (WEB_DIR / "templates" / "index.html").read_text(encoding="utf-8")
+        return add_versions(page, WEB_DIR / "static")
 
     @app.get("/editor/{job_id}", response_class=HTMLResponse)
     def editor_page(job_id: str) -> str:

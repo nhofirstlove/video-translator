@@ -795,3 +795,14 @@ def test_layout_gives_the_video_three_quarters_and_the_lines_one_quarter(make_ed
     right = page.locator(".ed-right").bounding_box()["width"]
     assert left / right == pytest.approx(3.0, rel=0.08)
     ed.shot("layout_1600")
+
+
+def test_layout_is_three_to_one_on_a_wide_window_even_with_long_lines(make_editor, world):
+    ed = make_editor(world.done_id, width=1900, height=940)
+    page = ed.page
+    left = page.locator(".ed-left").bounding_box()["width"]
+    right = page.locator(".ed-right").bounding_box()["width"]
+    total = page.locator(".ed-layout").bounding_box()["width"]
+    assert left / right == pytest.approx(3.0, rel=0.08)
+    assert right < total * 0.3
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

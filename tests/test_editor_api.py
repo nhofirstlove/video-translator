@@ -662,7 +662,35 @@ def test_editor_page_route(env):
         Path(__file__).resolve().parents[1] / "src/video_translator/web/templates/editor.html"
     )
     if template.is_file():
-        assert res.text == template.read_text(encoding="utf-8")
+        import re
+
+        # the only difference is the ?v=<file version> added to every /static link
+        assert re.sub(r"\?v=\d+", "", res.text) == template.read_text(encoding="utf-8")
+
+
+def test_static_links_are_versioned_and_files_are_not_cached(env):
+    import re
+
+    job_id = env.make_job()
+    for url in (f"/editor/{job_id}", "/"):
+        page = env.client.get(url).text
+        links = re.findall(r'(?:href|src)="(/static/[^"]+)"', page)
+        assert links and all(re.search(r"\?v=\d+$", link) for link in links), links
+    link = re.findall(
+        r'href="(/static/editor\.css\?v=\d+)"', env.client.get(f"/editor/{job_id}").text
+    )
+    res = env.client.get(link[0])
+    assert res.status_code == 200
+    assert res.headers["cache-control"] == "no-cache"
+    # a new file version gives a new address, so a browser cannot keep using the old file
+    from video_translator.web.assets import add_versions
+
+    static = Path(__file__).resolve().parents[1] / "src/video_translator/web/static"
+    before = add_versions('<link href="/static/editor.css">', static)
+    assert before.endswith(".css?v=" + before.split("?v=")[1]) and "?v=" in before
+    assert (
+        add_versions('<link href="/static/nope.css">', static) == '<link href="/static/nope.css">'
+    )
 
 
 def test_editor_routes_are_listed(env):

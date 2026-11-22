@@ -323,6 +323,12 @@ the active line to the current video time.
 - **The beep is still audible in the dub**: the original bleep tone is silenced in the final
   audio (`audio: {remove_beeps: true}`, the default); set it to `false` to keep it.
 
+### Troubleshooting the editor page
+
+- **The page looks old after an update** (for example the old layout): stop `serve` with
+  Ctrl+C, start it again, and reload the page with Ctrl+F5. Since this version the page links
+  carry a file version, so a normal reload is enough from now on.
+
 ### Troubleshooting the voice
 
 - **"The VieNeu-TTS voice package is not installed"**: activate the virtual environment and run

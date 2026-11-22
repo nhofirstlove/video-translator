@@ -34,6 +34,7 @@ from video_translator.waveform import (
     WaveformError,
     file_peaks,
 )
+from video_translator.web.assets import add_versions
 from video_translator.web.jobs import InvalidEdit, JobError, JobManager, JobNotFound, JobStateError
 
 MIN_LINE_SECONDS = 0.2
@@ -96,7 +97,7 @@ def get_manager(request: Request) -> JobManager:
 def editor_page_html(web_dir: Path) -> str:
     page = web_dir / "templates" / "editor.html"
     try:
-        return page.read_text(encoding="utf-8")
+        return add_versions(page.read_text(encoding="utf-8"), web_dir / "static")
     except OSError:
         return PLACEHOLDER_HTML
 

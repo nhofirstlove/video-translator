@@ -943,8 +943,27 @@
     }
   }
 
+  // ---------- play / pause (the browser's own video controls are off) ----------
+  function togglePlay() {
+    if (video.paused) { var p = video.play(); if (p && p.catch) p.catch(function () {}); } else video.pause();
+  }
+
+  function wirePlayButton() {
+    var btn = $("ed-play");
+    var sync = function () {
+      var label = video.paused ? "Play" : "Pause";
+      btn.textContent = label;
+      btn.setAttribute("aria-label", label);
+    };
+    btn.addEventListener("click", togglePlay);
+    video.addEventListener("click", togglePlay);   // click the picture to play or pause
+    ["play", "pause", "ended", "emptied"].forEach(function (n) { video.addEventListener(n, sync); });
+    sync();
+  }
+
   // ---------- init ----------
   function wireStatic() {
+    wirePlayButton();
     var subs = $("ed-opt-subs"), zh = $("ed-opt-zh"), follow = $("ed-opt-follow");
     subs.checked = readPref("subs", true);
     zh.checked = readPref("zh", false);

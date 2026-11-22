@@ -737,3 +737,61 @@ def test_timeline_drag_cannot_overlap_neighbours_and_escape_cancels(make_editor,
     moved = seg_of(world, world.done_id, i)
     assert moved.end <= nxt.start + 1e-6
     assert ed.errors == []
+
+
+# ----- player without the browser's own controls, blur outline on click, 3/4 + 1/4 layout ----
+
+
+def test_player_has_no_browser_controls_but_a_play_button_and_click_to_play(make_editor, world):
+    ed = make_editor(world.done_id)
+    page = ed.page
+    assert page.evaluate("document.getElementById('ed-video').controls") is False
+    play = page.locator("#ed-play")
+    assert play.inner_text() == "Play"
+    play.click()
+    wait_until(
+        lambda: not page.evaluate("document.getElementById('ed-video').paused"), 10, "playing"
+    )
+    wait_until(lambda: play.inner_text() == "Pause", 10, "label Pause")
+    play.click()
+    wait_until(lambda: page.evaluate("document.getElementById('ed-video').paused"), 10, "paused")
+    wait_until(lambda: play.inner_text() == "Play", 10, "label Play")
+    page.locator("#ed-video").click()  # clicking the picture plays too
+    wait_until(
+        lambda: not page.evaluate("document.getElementById('ed-video').paused"), 10, "playing 2"
+    )
+    page.locator("#ed-video").click()
+    wait_until(lambda: page.evaluate("document.getElementById('ed-video').paused"), 10, "paused 2")
+
+
+def test_blur_outline_and_handles_show_only_when_the_box_is_clicked(make_editor, world):
+    ed = make_editor(world.review_id)
+    page = ed.page
+    page.evaluate("document.getElementById('ed-video').load()")
+    wait_until(lambda: page.evaluate("document.getElementById('ed-video').videoWidth") > 0, 15)
+    page.locator("#eb-enabled").check()
+    box = page.locator(".eb-box")
+    wait_until(lambda: box.is_visible(), 10, "box visible")
+    handle = page.locator(".eb-se")
+    # switching the box on selects it, so it can be seen where it is
+    assert "eb-selected" in box.get_attribute("class") and handle.is_visible()
+    # clicking somewhere else hides the outline and the handles; the blur stays
+    page.locator("#ed-title").click()
+    assert "eb-selected" not in box.get_attribute("class")
+    assert handle.is_hidden() and box.is_visible()
+    # clicking the box brings them back, Escape hides them again
+    box.click()
+    assert "eb-selected" in box.get_attribute("class") and handle.is_visible()
+    page.keyboard.press("Escape")
+    assert "eb-selected" not in box.get_attribute("class")
+    page.locator("#eb-enabled").uncheck()
+    wait_until(lambda: world.job(world.review_id).blur_overrides.get("enabled") is False, 10)
+
+
+def test_layout_gives_the_video_three_quarters_and_the_lines_one_quarter(make_editor, world):
+    ed = make_editor(world.done_id, width=1600, height=900)
+    page = ed.page
+    left = page.locator(".ed-left").bounding_box()["width"]
+    right = page.locator(".ed-right").bounding_box()["width"]
+    assert left / right == pytest.approx(3.0, rel=0.08)
+    ed.shot("layout_1600")

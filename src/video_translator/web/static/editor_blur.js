@@ -42,6 +42,7 @@
   var els = {};           // panel inputs
   var boxEl = null, textEl = null;
   var stageEl = null;
+  var selected = false;   // the box is clicked: show its outline and handles
 
   // ---------- geometry ----------
   function frame() {
@@ -83,6 +84,14 @@
     });
     stageEl.appendChild(boxEl);
     boxEl.addEventListener("pointerdown", onPointerDown);
+    // the outline and handles show only while the box is selected: click it to select, click anywhere else to hide them
+    document.addEventListener("pointerdown", function (ev) {
+      if (!selected) return;
+      var t = ev.target;
+      if (boxEl.contains(t) || (t.closest && t.closest("#blur-panel"))) return;
+      select(false);
+    }, true);
+    document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && selected) select(false); });
     if (window.ResizeObserver) new ResizeObserver(layout).observe(stageEl);
     window.addEventListener("resize", layout);
     ed().video.addEventListener("loadedmetadata", layout);
@@ -141,9 +150,15 @@
     if (!ed().video.paused && !ed().video.ended) requestAnimationFrame(loop);
   }
 
+  function select(on) {
+    selected = !!on;
+    if (boxEl) boxEl.classList.toggle("eb-selected", selected);
+  }
+
   // ---------- dragging ----------
   function onPointerDown(ev) {
     if (!editable() || ev.button > 0) return;
+    select(true);
     var dir = ev.target && ev.target.dataset ? ev.target.dataset.dir : "";
     var f = frame(), k = scale();
     if (!f || !k) return;
@@ -208,6 +223,7 @@
     els.enabled.addEventListener("change", function () {
       S.enabled = els.enabled.checked;
       if (S.enabled) { sanitize(); syncInputs(); }
+      select(S.enabled);
       layout(); updateHint(); scheduleSave();
     });
     els.status = h("p", { class: "eb-status muted small-text", role: "status", "aria-live": "polite" });
@@ -238,7 +254,7 @@
   function updateHint() {
     if (!els.hint) return;
     els.hint.textContent = S && S.enabled
-      ? "Drag the box on the video to move it, drag its edges or corners to resize it. The blur here is only an approximation. " +
+      ? "Click the box on the video to select it, then drag it to move it or drag its edges or corners to resize it (click elsewhere to hide the outline). The blur here is only an approximation. " +
         "Press \"Apply and re-render\" to make the real video: it is re-encoded, so it takes much longer than before."
       : "Off: the video is copied unchanged and only a separate .srt file has the Vietnamese subtitles.";
   }

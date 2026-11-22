@@ -1,10 +1,12 @@
 /* Editor blur box (editor_blur.js). Uses the colour tokens of style.css. */
 .eb-box {
   position: absolute; z-index: 3; box-sizing: border-box; cursor: move; touch-action: none;
-  border: 2px dashed rgba(255, 255, 255, 0.9); outline: 1px solid rgba(0, 0, 0, 0.6);
+  border: 2px solid transparent;   /* the dashed outline and the handles only show once the box is clicked */
   display: flex; align-items: center; justify-content: center; overflow: visible;
 }
-.eb-box.eb-ro { cursor: default; pointer-events: none; border-style: solid; border-color: rgba(255, 255, 255, 0.4); }
+.eb-box.eb-selected { border-style: dashed; border-color: rgba(255, 255, 255, 0.9); outline: 1px solid rgba(0, 0, 0, 0.6); }
+.eb-box:not(.eb-selected) .eb-handle { display: none; }
+.eb-box.eb-ro { cursor: default; pointer-events: none; }
 .eb-text {
   max-width: 100%; text-align: center; color: #fff; font-weight: 700; line-height: 1.2;
   white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; padding: 0 2%;

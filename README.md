@@ -220,7 +220,9 @@ browser instead. Set `review: false` in `config/local.yaml` to skip the stop.
 
 On the web page, every video that already has lines (waiting for review, paused, failed or
 finished) has an **Open editor** button (`/editor/<job id>`). The editor shows the video with
-the Vietnamese subtitles on top, a timeline of all lines and one row per line:
+the Vietnamese subtitles on top (about three quarters of the page; the lines are on the right, about
+a quarter), a **Play** button, `Space` and a click on the picture to play or pause (the browser's own
+video bar is not shown), a timeline of all lines and one row per line:
 
 - Click a line to jump the video to it. Edit the Vietnamese text and the start/end times
   (`mm:ss.mmm` or plain seconds); a bad time is refused with a message. Changes are saved on
@@ -239,8 +241,9 @@ the Vietnamese subtitles on top, a timeline of all lines and one row per line:
   new files, or tick **Dubbed result** to watch the finished mp4.
 
 - **Blur the Chinese subtitles**: tick the box in the "Blur the Chinese subtitles" section of the
-  editor. A box appears over the video: drag it to move it, drag its edges or corners to resize
-  it (or type the position and size in pixels of the original video). Set the blur strength,
+  editor. A box appears over the video: click it to see its outline and handles (click elsewhere
+  to hide them again), then drag it to move it or drag its edges or corners to resize it (or
+  type the position and size in pixels of the original video). Set the blur strength,
   an optional dark layer and the Vietnamese text size. The Vietnamese subtitles are drawn white
   with a dark outline, centred in the box; the preview in the page is only an approximation.
   The settings are saved for that video right away; **Save as default for new videos** writes

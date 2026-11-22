@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
 
@@ -17,7 +21,6 @@ MIN_RAM_GB = 4.0
 FFMPEG_HINT = "on Windows run `winget install Gyan.FFmpeg`, then reopen the terminal"
 KEY_HELP = {
     "GEMINI_API_KEY": "get one in Google AI Studio (https://aistudio.google.com/apikey)",
-    "ELEVENLABS_API_KEY": "get one in your ElevenLabs profile (API keys)",
 }
 
 
@@ -118,6 +121,66 @@ def check_key(var: str) -> CheckResult:
     return CheckResult(var, WARN, f"missing; {KEY_HELP[var]} and put it in .env")
 
 
+def check_vieneu(
+    mode: str = "library",
+    server_url: str = "http://localhost:8000",
+    importer: Callable[[str], object] = importlib.import_module,
+    connector: Callable[..., object] = socket.create_connection,
+) -> CheckResult:
+    """Library mode: the ``vieneu`` package imports. Server mode: the server answers."""
+    if mode == "server":
+        parsed = urlparse(server_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            conn = connector((host, port), timeout=2)
+            close = getattr(conn, "close", None)
+            if close:
+                close()
+        except OSError:
+            return CheckResult(
+                "vieneu",
+                WARN,
+                f"cannot reach the VieNeu server at {server_url}; start it with "
+                "`uv run python -m apps.openai_speech` in the VieNeu-TTS folder",
+            )
+        return CheckResult("vieneu", OK, f"server mode, {server_url} is reachable")
+    try:
+        importer("vieneu")
+    except Exception:  # not installed, or its own dependencies are broken
+        return CheckResult(
+            "vieneu",
+            WARN,
+            "voice package not installed; in the activated virtual environment run "
+            "`pip install vieneu`",
+        )
+    return CheckResult("vieneu", OK, "library mode, voice package installed")
+
+
+def check_whisper(
+    asr: str = "whisper_gemini",
+    model: str = "medium",
+    importer: Callable[[str], object] = importlib.import_module,
+) -> CheckResult:
+    """The local speech-timing package (faster-whisper) imports, when it is in use."""
+    if asr != "whisper_gemini":
+        return CheckResult("whisper", OK, f"not used (providers.asr is {asr})")
+    try:
+        importer("faster_whisper")
+    except Exception:
+        return CheckResult(
+            "whisper",
+            WARN,
+            "speech-timing package not installed; in the activated virtual environment run "
+            "`pip install faster-whisper`",
+        )
+    return CheckResult(
+        "whisper",
+        OK,
+        f"installed; the {model!r} model downloads on first use (internet needed once)",
+    )
+
+
 def check_config() -> CheckResult:
     from video_translator.config import ConfigError, load_config
 
@@ -131,10 +194,15 @@ def check_config() -> CheckResult:
 def run_checks() -> list[CheckResult]:
     config_result = check_config()
     device_pref = "auto"
+    mode, server_url = "library", "http://localhost:8000"
+    asr, whisper_model = "whisper_gemini", "medium"
     if config_result.status == OK:
         from video_translator.config import load_config
 
-        device_pref = load_config().device
+        cfg = load_config()
+        device_pref = cfg.device
+        mode, server_url = cfg.vieneu.mode, cfg.vieneu.server_url
+        asr, whisper_model = cfg.providers.asr, cfg.whisper.model
     return [
         check_python(),
         check_tool("ffmpeg"),
@@ -142,7 +210,8 @@ def run_checks() -> list[CheckResult]:
         check_hardware(),
         check_device(device_pref),
         check_key("GEMINI_API_KEY"),
-        check_key("ELEVENLABS_API_KEY"),
+        check_whisper(asr, whisper_model),
+        check_vieneu(mode, server_url),
         config_result,
     ]
 

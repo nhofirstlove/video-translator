@@ -9,7 +9,7 @@
 [extract_audio] --> audio/audio.wav (44.1 kHz stereo) + chunks/chunk_NNN.wav (16 kHz mono,
     |                                                    overlapping by 5 s)
     v
-[transcribe]    Gemini, one request per chunk --> zh segments (video-absolute times)
+[transcribe]    per chunk: faster-whisper (local) times each line, Gemini corrects the words --> zh segments (video-absolute times)
     |
     v
 [translate]     Gemini, batches of 40 with 3 lines of context --> vi text
@@ -21,7 +21,7 @@
 [subtitles]     --> subtitles/<name>.vi.srt
     |
     v
-[synthesize]    ElevenLabs, one clip per segment (budget checked first) --> tts/
+[synthesize]    VieNeu-TTS, one clip per segment (resumable) --> tts/
     |
     v
 [align]         fit clips to their slots --> aligned/ + voice_track.wav (full length)
@@ -60,14 +60,31 @@ resume. Two uses:
 - `review` raises `AWAITING_REVIEW` until `job.review_approved` is set (`resume --approve` or
   the web Approve button). On approval it reads `review/review.txt` if the user changed it
   after it was written (web edits go straight into `job.segments`).
-- `PAUSED`: Gemini daily quota (transcribe/translate, after saving finished chunks/batches)
-  or too small an ElevenLabs budget (synthesize, before any request).
+- `PAUSED`: Gemini daily quota (transcribe/translate, after saving finished chunks/batches).
 
-Any other exception makes the job `FAILED`; it can be resumed after the problem is fixed.
+Any other exception makes the job `FAILED`; it can be resumed after the problem is fixed. A
+voice (TTS) error fails the synthesize stage with a message naming the failing line; clips
+already made are kept.
 
 AI steps (ASR, translation, TTS) never hard-code a model. A stage asks the provider registry
 for the class named in `config.providers.<kind>`, so implementations are interchangeable.
 Importing `video_translator.providers` (or any stage) registers the built-in ones.
+
+## The interactive editor
+
+`/editor/<job id>` is a second page of the web UI for fixing a job after (or before) dubbing.
+Contract between the pieces: `docs/editor-api.md`.
+
+- `web/editor_api.py`: the JSON API (lines, per-line voice and speed, volumes, apply, media with
+  Range support). Edits go through `JobManager.editing()` (per-job lock, 409 while running).
+- `synth_line.py`: speaks ONE line (one TTS call, clip re-fitted by `stages.align.fit_segment`).
+  Free and local, so the editor needs no confirmation.
+- `web/jobs.py`: `apply_edits()` starts the "apply" pipeline: subtitles, align, mix, render
+  (never synthesize), using the job's `audio_overrides` volumes and per-line `speed`.
+- `web/templates/editor.html`, `static/editor.js` (page, player, lines), `static/editor_audio.js`
+  (listen, regenerate, speed, volumes, Web Audio dub preview, Apply flow).
+- `tests/test_editor_browser.py` drives all of it in a real Chromium (Playwright) with the real
+  stages and fake providers; it is skipped when Playwright or Chromium is missing.
 
 ## Adding a stage
 
@@ -92,23 +109,33 @@ Each job gets its own folder under `paths.work` (default `data/work/`):
 data/work/<job-id>/
     job.json             full job state (written after every stage)
     audio/audio.wav      extract_audio
-    chunks/              extract_audio (chunk_NNN.wav)
+    chunks/              extract_audio (chunk_NNN.wav, plus chunk_NNN.whisper.json: Whisper timing cache)
     transcripts/         transcribe (one json per chunk, reused on resume)
     translations/        translate (one json per batch, reused on resume)
     review/review.txt    review (the file the user edits)
     subtitles/           subtitles (<name>.vi.srt)
-    tts/                 synthesize (one mp3 per segment)
+    tts/                 synthesize (one wav per segment)
     aligned/             align (one wav per segment)
     voice_track.wav      align
     mixed.wav            mix
 ```
 
 The final files are written to `paths.output` (default `data/output/`) as `<name>.vi.mp4`
-and `<name>.vi.srt`. The ElevenLabs monthly character counter lives in
-`data/usage/elevenlabs_YYYY-MM.json`.
+and `<name>.vi.srt`.
+
+## Text to speech (VieNeu-TTS)
+
+`providers/tts/vieneu.py` (`providers.tts: vieneu`) is free, local and open source. Config
+section `vieneu`: `mode` (`library`: the `vieneu` Python package, one shared model per process
+created on first use under a lock, calls serialized; or `server`: HTTP POST to
+`<server_url>/v1/audio/speech`, standard library only), `voice` (preset name), `precision`,
+`server_url`, `timeout_seconds`. Clips are 48 kHz mono `.wav` files. The package is imported
+lazily; errors derive from `TTSError` (`TTSSetupError` for a missing package, model download
+or unreachable server, `TTSVoiceError` for an unknown voice). Tests inject a fake transport
+(`synthesize(text, voice, out_path)` and `list_voices()`).
 
 ## Tests
 
 `tests/test_e2e.py` and `tests/test_e2e_web_cli.py` run the real pipeline (real ffmpeg, real
-stages) on a synthetic video with fake Gemini and ElevenLabs transports from
+stages) on a synthetic video with fake Gemini and VieNeu transports from
 `tests/e2e_support.py`; no network is used.

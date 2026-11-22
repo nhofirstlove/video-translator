@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Editor - Video Translator</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/editor.css">
+  <link rel="stylesheet" href="/static/editor_audio.css">
+  <link rel="stylesheet" href="/static/editor_blur.css">
+  <link rel="stylesheet" href="/static/editor_timeline.css">
+</head>
+<body class="editor">
+  <a class="skip" href="#ed-lines">Skip to lines</a>
+
+  <header class="ed-top">
+    <a class="btn small" href="/" id="ed-back">&larr; Back to jobs</a>
+    <h1 class="ed-title" id="ed-title">Editor</h1>
+    <span class="badge" id="ed-status" hidden></span>
+    <label class="ed-check ed-dub" id="ed-dub-label">
+      <input type="checkbox" id="ed-dub-toggle" disabled>
+      <span>Dubbed result</span>
+    </label>
+  </header>
+
+  <div class="ed-banner" id="ed-banner" role="status" hidden></div>
+  <div class="ed-loaderror" id="ed-loaderror" role="alert" hidden>
+    <p id="ed-loaderror-text"></p>
+    <button type="button" class="btn" id="ed-retry">Try again</button>
+  </div>
+
+  <div class="ed-layout" id="ed-layout">
+    <div class="ed-left">
+      <div class="ed-player" id="ed-player">
+        <div class="ed-stage" id="ed-stage">
+          <video id="ed-video" controls playsinline preload="metadata"
+                 aria-label="Video preview"></video>
+          <div class="ed-sub" id="ed-sub" aria-hidden="true">
+            <div class="ed-sub-zh zh" id="ed-sub-zh" lang="zh" hidden></div>
+            <div class="ed-sub-vi" id="ed-sub-vi" lang="vi" hidden></div>
+          </div>
+          <p class="ed-novideo" id="ed-novideo" hidden>No video file is available for this job.</p>
+        </div>
+        <div class="ed-timeline" id="ed-timeline" role="slider" tabindex="0"
+             aria-label="Timeline. Left and right arrow keys move 5 seconds."
+             aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.000">
+          <div class="ed-tl-track" id="ed-tl-track"></div>
+          <div class="ed-tl-head" id="ed-tl-head"></div>
+        </div>
+        <div class="ed-clock muted small-text">
+          <span id="ed-clock">00:00.000</span>
+          <span class="ed-legend" aria-hidden="true">
+            <i class="sw ok"></i>line
+            <i class="sw bad"></i>too long
+            <i class="sw stale"></i>out of date
+          </span>
+        </div>
+      </div>
+
+      <div id="tracks-panel"></div>
+
+      <div class="ed-options" role="group" aria-label="Display options">
+        <label class="ed-check"><input type="checkbox" id="ed-opt-subs" checked> <span>Show subtitles</span></label>
+        <label class="ed-check"><input type="checkbox" id="ed-opt-zh"> <span>Show Chinese line</span></label>
+      </div>
+
+      <div id="blur-panel"></div>
+      <div id="audio-panel"></div>
+
+      <details class="ed-help">
+        <summary>Keyboard shortcuts</summary>
+        <ul>
+          <li><kbd>Space</kbd> play or pause (when not typing)</li>
+          <li><kbd>Alt</kbd>+<kbd>Up</kbd> / <kbd>Down</kbd> previous or next line</li>
+          <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd> in a line: save and go to the next line</li>
+          <li><kbd>[</kbd> / <kbd>]</kbd> set start / end of the active line to the current time</li>
+        </ul>
+      </details>
+    </div>
+
+    <div class="ed-right">
+      <div class="ed-lines-head">
+        <h2 id="ed-lines-heading">Lines <span class="muted small-text" id="ed-count"></span></h2>
+        <label class="ed-check"><input type="checkbox" id="ed-opt-follow" checked> <span>Follow playback</span></label>
+      </div>
+      <div class="ed-lines" id="ed-lines" tabindex="-1" aria-labelledby="ed-lines-heading">
+        <p class="muted" id="ed-loading">Loading...</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="ed-toasts" id="ed-toasts" role="status" aria-live="polite"></div>
+  <script src="/static/editor.js"></script>
+  <script src="/static/editor_audio.js"></script>
+  <script src="/static/editor_blur.js"></script>
+  <script src="/static/editor_timeline.js"></script>
+</body>
+</html>

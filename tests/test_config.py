@@ -12,10 +12,10 @@ def _no_env_override(monkeypatch):
 
 def test_default_load():
     cfg = load_config()
-    assert cfg.providers.asr == "gemini" and cfg.providers.tts == "elevenlabs"
-    assert cfg.gemini.model == "gemini-2.5-flash"
-    assert cfg.elevenlabs.monthly_character_budget == 10000
-    assert cfg.chunk_minutes == 10 and cfg.review is True
+    assert cfg.providers.asr == "whisper_gemini" and cfg.providers.tts == "vieneu"
+    assert cfg.gemini.model == "gemini-3.6-flash"
+    assert cfg.vieneu.mode == "library" and cfg.vieneu.voice == "Trúc Ly"
+    assert cfg.chunk_minutes == 5 and cfg.review is True
     assert cfg.audio.ducked_volume == 0.25
     assert cfg == AppConfig()  # YAML and built-in defaults agree
 
@@ -52,3 +52,18 @@ def test_unknown_key_and_missing_file(tmp_path):
         load_config(bad)
     with pytest.raises(ConfigError, match="not found"):
         load_config(tmp_path / "nope.yaml")
+
+
+def test_python_dash_m_entry_point_runs():
+    """`python -m video_translator doctor --help` must work even without the console script."""
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "video_translator", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0
+    assert "doctor" in result.stdout

@@ -16,6 +16,7 @@ import os
 import uuid
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -52,6 +53,8 @@ class Segment(BaseModel):
     audio_path: Path | None = None  # set by synthesize
     aligned_path: Path | None = None  # set by align
     flags: list[str] = Field(default_factory=list)  # e.g. "too_long"
+    speed: float | None = None  # user-chosen tempo of the raw clip (editor); None = automatic
+    audio_stale: bool = False  # the text changed after the clip was made (editor)
 
     @property
     def duration(self) -> float:
@@ -74,6 +77,10 @@ class Job(BaseModel):
     error: str = ""
     message: str = ""  # human-readable progress or pause text
     current_stage: str = ""
+    # Volumes chosen in the editor (keys of ``AudioConfig``); they win over the config values.
+    audio_overrides: dict[str, float] = Field(default_factory=dict)
+    # Blur-box settings chosen for this video in the editor (keys of ``BlurConfig``).
+    blur_overrides: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def create(cls, input_path: str | Path, work_root: str | Path) -> Job:

@@ -57,10 +57,7 @@ def test_web_upload_review_approve_download(tmp_path, monkeypatch):
 
             segments = client.get(f"/api/jobs/{job_id}/segments").json()
             assert [s["text_vi"] for s in segments] == [vietnamese_for(u[2]) for u in UTTERANCES]
-            assert (
-                client.get("/api/config/summary").json()["elevenlabs"]["characters_used_this_month"]
-                == 0
-            )
+            assert fakes.tts.calls == []  # nothing is spoken before the review is approved
 
             edit = client.put(
                 f"/api/jobs/{job_id}/segments",
@@ -87,8 +84,6 @@ def test_web_upload_review_approve_download(tmp_path, monkeypatch):
             srt_file.write_bytes(srt.content)
             assert srt_blocks(srt_file)[EDITED_INDEX][1] == EDITED
 
-            used = client.get("/api/config/summary").json()["elevenlabs"]
-            assert used["characters_used_this_month"] == sum(len(c[0]) for c in fakes.tts.calls)
             assert len(fakes.tts.calls) == len(UTTERANCES)
         finally:
             client.app.state.jobs.shutdown()
@@ -126,10 +121,12 @@ def test_cli_run_pause_edit_resume_approve(tmp_path, monkeypatch, capsys):
 
 
 @needs_ffmpeg
-def test_cli_paused_by_budget_prints_resume_command_without_approve(tmp_path, monkeypatch, capsys):
-    install_fakes(monkeypatch, tmp_path)
+def test_cli_paused_by_gemini_quota_prints_resume_command_without_approve(
+    tmp_path, monkeypatch, capsys
+):
+    fakes = install_fakes(monkeypatch, tmp_path)
+    fakes.gemini.translate_quota_after = 0
     config = make_config(tmp_path, review=False)
-    config.elevenlabs.monthly_character_budget = 10
     monkeypatch.setattr(cli, "load_config", lambda path=None: config)
     monkeypatch.chdir(tmp_path)
     video = make_video(tmp_path / "clip.mp4")
@@ -137,7 +134,21 @@ def test_cli_paused_by_budget_prints_resume_command_without_approve(tmp_path, mo
     assert cli.main(["run", str(video)]) == 0  # a pause is not an error
     out = capsys.readouterr().out
     assert "Status: paused" in out
-    assert "Not enough ElevenLabs characters" in out
     job_dir = next(line for line in out.splitlines() if line.startswith("Job folder:"))[12:]
     assert f"Continue with: video-translator resume {job_dir}\n" in out
     assert "--approve" not in out
+
+
+@needs_ffmpeg
+def test_cli_voice_failure_names_the_line_and_exits_nonzero(tmp_path, monkeypatch, capsys):
+    fakes = install_fakes(monkeypatch, tmp_path)
+    fakes.tts.fail_on = vietnamese_for(UTTERANCES[1][2])
+    config = make_config(tmp_path, review=False)
+    monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+    monkeypatch.chdir(tmp_path)
+    video = make_video(tmp_path / "clip.mp4")
+
+    assert cli.main(["run", str(video)]) == 1
+    captured = capsys.readouterr()
+    assert "line 2" in captured.err
+    assert "Failed in stage 'synthesize'" in captured.err

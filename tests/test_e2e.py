@@ -1,4 +1,4 @@
-"""End-to-end: the REAL stages and pipeline on a synthetic video, with fake Gemini/ElevenLabs."""
+"""End-to-end: the REAL stages and pipeline on a synthetic video, with fake Gemini/VieNeu."""
 
 from __future__ import annotations
 
@@ -6,11 +6,13 @@ import os
 import re
 from pathlib import Path
 
+import pytest
+
 from tests.e2e_support import (
     BED_FREQS,
     UTTERANCES,
     VOICE_FREQ,
-    VOICE_ID,
+    VOICE_NAME,
     install_fakes,
     make_config,
     make_video,
@@ -21,6 +23,7 @@ from tests.e2e_support import (
 )
 from video_translator.models import Job, JobStatus
 from video_translator.pipeline import Pipeline
+from video_translator.providers.tts.base import TTSError
 from video_translator.review_file import review_path
 from video_translator.stages import build_stages
 
@@ -86,7 +89,7 @@ def test_full_run_with_review_edit_and_resume(tmp_path, monkeypatch):
     assert len(fakes.gemini.asr_calls) == 3
     assert len(fakes.gemini.translate_prompts) == 3  # 9 segments in batches of 3
     assert '"context"' in fakes.gemini.translate_prompts[1]  # earlier lines shown for consistency
-    assert fakes.tts.calls == []  # nothing paid before the user approved
+    assert fakes.tts.calls == []  # no voice made before the user approved
     assert Job.load(job.work_dir).status == JobStatus.AWAITING_REVIEW
 
     # ---- the user edits one Vietnamese line and approves ----------------------------------
@@ -101,12 +104,12 @@ def test_full_run_with_review_edit_and_resume(tmp_path, monkeypatch):
         "review", "subtitles", "synthesize", "align", "mix", "render"
     ]  # fmt: skip
 
-    # no repeated paid calls on resume
+    # no repeated voice calls on resume
     assert len(fakes.gemini.asr_calls) == 3
     assert len(fakes.gemini.translate_prompts) == 3
     assert len(fakes.tts.calls) == len(UTTERANCES)
     assert [c[0] for c in fakes.tts.calls][EDITED_INDEX] == EDITED
-    assert {c[1] for c in fakes.tts.calls} == {VOICE_ID}
+    assert {c[1] for c in fakes.tts.calls} == {VOICE_NAME}
 
     # artifacts
     for key in ("audio", "voice_track", "mixed_audio", "srt", "output", "srt_output"):
@@ -181,26 +184,24 @@ def test_gemini_quota_pause_then_resume_does_not_retranslate(tmp_path, monkeypat
 
 
 @needs_ffmpeg
-def test_elevenlabs_budget_too_small_pauses_before_synthesizing(tmp_path, monkeypatch):
+def test_voice_failure_on_a_line_fails_the_job_naming_the_line_then_resumes(tmp_path, monkeypatch):
     fakes = install_fakes(monkeypatch, tmp_path)
     config = make_config(tmp_path, review=False)
-    config.elevenlabs.monthly_character_budget = 50  # the video needs a few hundred
     _video, job = new_job(tmp_path, config)
+    fakes.tts.fail_on = vietnamese_for(UTTERANCES[4][2])  # line 5 cannot be spoken
 
-    job = pipeline_for(config).run(job)
-    assert job.status == JobStatus.PAUSED
+    with pytest.raises(TTSError):
+        pipeline_for(config).run(job)
+    job = Job.load(job.work_dir)
+    assert job.status == JobStatus.FAILED
     assert job.current_stage == "synthesize"
-    assert "Not enough ElevenLabs characters" in job.message
-    assert "Nothing was synthesized" in job.message
-    assert fakes.tts.calls == []
-    assert not list((job.work_dir / "tts").glob("*"))
-    assert all(seg.audio_path is None for seg in job.segments)
+    assert "line 5" in job.error
     assert "synthesize" not in job.completed_stages
-    assert "subtitles" in job.completed_stages  # free work before it is kept
+    assert sum(1 for s in job.segments if s.audio_path) == 4  # finished clips are kept
 
-    # raise the budget: the same job resumes and finishes, paying exactly once per line
-    config.elevenlabs.monthly_character_budget = 10000
-    job = pipeline_for(config).resume(Job.load(job.work_dir))
+    fakes.tts.fail_on = None  # fixed: the job resumes and only speaks the missing lines
+    before = len(fakes.tts.calls)
+    job = pipeline_for(config).resume(job)
     assert job.status == JobStatus.DONE, job.error
-    assert len(fakes.tts.calls) == len(UTTERANCES)
-    assert len(fakes.gemini.asr_calls) == 3
+    assert len(fakes.tts.calls) - before == len(UTTERANCES) - 4  # only the missing lines
+    assert Path(job.artifacts["output"]).is_file()

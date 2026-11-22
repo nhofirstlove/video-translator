@@ -24,13 +24,22 @@ extract_audio, transcribe, translate, review, subtitles, synthesize, align, mix,
 `Pipeline(stages, config).run(job, on_progress)` / `.resume(job)`: saves after each stage,
 skips names in `job.completed_stages`, sets `job.current_stage`. A stage that raises
 anything but `PauseRequested` makes the job FAILED (`job.error`, re-raised). Stages must be
-resumable: do not redo paid/finished work (check files/segments already filled in).
+resumable: do not redo finished work (check files/segments already filled in).
 
 ## Pausing
 `raise PauseRequested(JobStatus.AWAITING_REVIEW | JobStatus.PAUSED, "message for the user")`
 (from `stages.base`). The pipeline stores status and message, saves, and returns the job.
 The stage is not marked complete, so it runs again on `resume`. Convert
 `QuotaExhaustedError` (Gemini daily quota) into `PAUSED`; save partial progress first.
+
+## TTS (`providers/tts/`)
+`TTSProvider.synthesize(text, out_path, voice=None) -> Path` writes an audio file (the provider's
+`extension`, `.wav` for VieNeu-TTS) and returns it; `list_voices() -> list[str]` (may be empty).
+Errors derive from `TTSError` (`TTSSetupError`, `TTSVoiceError`); there is no quota. The
+synthesize stage turns a `TTSError` into a failure that names the line number (the job is
+FAILED, finished clips are kept). In tests, never load the real package or use the network:
+`VieNeuTTS(config=cfg, transport=fake)` where `fake.synthesize(text, voice, out_path)` writes a
+file and `fake.list_voices()` returns `(label, voice_id)` pairs.
 
 ## ffmpeg (`utils/ffmpeg.py`)
 `find_ffmpeg()`, `find_ffprobe()`, `run_ffmpeg(args, desc="")`, `probe_duration(path)`,

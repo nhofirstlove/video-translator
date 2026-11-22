@@ -133,7 +133,7 @@ class GeminiClient:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.6-flash",
         requests_per_minute: int = 10,
         transport: GeminiTransport | None = None,
         *,

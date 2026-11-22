@@ -12,7 +12,8 @@ import queue
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO
 
@@ -22,6 +23,7 @@ from video_translator.paths import resolve_path, safe_name
 
 if TYPE_CHECKING:
     from video_translator.pipeline import Pipeline
+    from video_translator.synth_line import TTSFactory
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +35,15 @@ INTERRUPTED_MESSAGE = (
     "Press Resume to continue; finished steps are not repeated."
 )
 QUEUED_MESSAGE = "Waiting for another job to finish."
+# Statuses in which the editor may change a job (never while it is running or queued).
+EDITABLE_STATUSES = (
+    JobStatus.AWAITING_REVIEW,
+    JobStatus.DONE,
+    JobStatus.PAUSED,
+    JobStatus.FAILED,
+)
+# Stages the editor's "apply" re-runs; synthesize and review never run again.
+APPLY_STAGES = ("subtitles", "align", "mix", "render")
 
 PipelineFactory = Callable[[AppConfig], "Pipeline"]
 
@@ -72,6 +83,14 @@ def default_pipeline_factory(config: AppConfig) -> Pipeline:
     return Pipeline(build_stages(config), config)
 
 
+def apply_pipeline_factory(config: AppConfig) -> Pipeline:
+    """Pipeline for the editor's apply: subtitles, align, mix, render (no synthesize)."""
+    from video_translator.pipeline import Pipeline
+    from video_translator.stages import build_stages
+
+    return Pipeline([st for st in build_stages(config) if st.name in APPLY_STAGES], config)
+
+
 def check_job_id(job_id: str) -> str:
     if not isinstance(job_id, str) or not JOB_ID_RE.fullmatch(job_id):
         raise InvalidJobId("Unknown job.")
@@ -90,10 +109,19 @@ def clean_upload_name(filename: str | None) -> str:
 
 
 class JobManager:
-    def __init__(self, config: AppConfig, pipeline_factory: PipelineFactory | None = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        pipeline_factory: PipelineFactory | None = None,
+        tts_factory: TTSFactory | None = None,
+    ) -> None:
         self.config = config
         self.pipeline_factory: PipelineFactory = pipeline_factory or default_pipeline_factory
+        self.tts_factory = tts_factory  # None = the configured provider (editor: one line)
+        self.apply_factory: PipelineFactory = apply_pipeline_factory
         self._lock = threading.RLock()
+        self._job_locks: dict[str, threading.RLock] = {}
+        self._factory_overrides: dict[str, PipelineFactory] = {}
         self._live: dict[str, Job] = {}  # snapshots of queued/running jobs
         self._progress: dict[str, dict[str, Any]] = {}
         self._queued: list[str] = []
@@ -298,8 +326,8 @@ class JobManager:
             raise JobStateError("There is no translation waiting for approval.")
         return self._enqueue(job, approve=True)
 
-    def _enqueue(self, job: Job, approve: bool) -> Job:
-        with self._lock:
+    def _enqueue(self, job: Job, approve: bool, factory: PipelineFactory | None = None) -> Job:
+        with self._job_lock(job.id), self._lock:
             if self._is_active(job.id):
                 raise JobStateError("This job is already running or waiting to run.")
             if approve:
@@ -308,6 +336,8 @@ class JobManager:
             job.save()
             if self._running is not None:
                 job.message = QUEUED_MESSAGE  # shown in the UI only, not written to disk
+            if factory is not None:
+                self._factory_overrides[job.id] = factory
             self._live[job.id] = job
             self._queued.append(job.id)
             self._queue.put((job.id, approve))
@@ -349,6 +379,7 @@ class JobManager:
             if live is None:
                 return
             job = live.model_copy(deep=True)
+            factory = self._factory_overrides.pop(job_id, None) or self.pipeline_factory
             self._queued.remove(job_id)
             self._running = job_id
             job.status = JobStatus.RUNNING
@@ -364,7 +395,7 @@ class JobManager:
                     snap.current_stage = stage
 
         try:
-            pipeline = self.pipeline_factory(self.config)
+            pipeline = factory(self.config)
             pipeline.resume(job, on_progress)
         except Exception as exc:  # the pipeline saves FAILED itself; this covers other errors
             log.warning("Job %s failed: %s", job_id, exc)
@@ -397,7 +428,7 @@ class JobManager:
 
     def save_edits(self, job_id: str, edits: dict[int, str]) -> Job:
         """Replace the Vietnamese text of some segments (only while awaiting review)."""
-        with self._lock:
+        with self._job_lock(job_id), self._lock:
             job = self._load(job_id)
             if job.status != JobStatus.AWAITING_REVIEW or self._is_active(job_id):
                 raise JobStateError("The translation can only be edited while it awaits review.")
@@ -416,3 +447,60 @@ class JobManager:
                 job.segments[index].text_vi = text
             job.save()
             return job
+
+    # ----- editor --------------------------------------------------------------------------
+
+    def _job_lock(self, job_id: str) -> threading.RLock:
+        """Per-job lock: edits, regeneration and (re)starts of one job never interleave.
+
+        Lock order is always job lock first, then ``self._lock``.
+        """
+        with self._lock:
+            lock = self._job_locks.get(job_id)
+            if lock is None:
+                lock = self._job_locks[job_id] = threading.RLock()
+            return lock
+
+    def _load_editable(self, job_id: str) -> Job:
+        """The job from disk if the editor may change it now; 409 while running or queued."""
+        check_job_id(job_id)
+        with self._lock:
+            if self._is_active(job_id):
+                raise JobStateError(
+                    "This video is being processed right now. Try again when it is done."
+                )
+            job = self._load(job_id)
+            if job.status not in EDITABLE_STATUSES:
+                raise JobStateError(
+                    f"This video cannot be edited yet (it is {job.status.value.replace('_', ' ')})."
+                )
+            return job
+
+    @contextmanager
+    def editing(self, job_id: str, save: bool = True) -> Iterator[Job]:
+        """Exclusive access to a job for an edit: yields the fresh job, saves it on success.
+
+        Raises ``JobStateError`` (409) if the job is running, queued or in a state that
+        cannot be edited.
+        """
+        with self._job_lock(job_id):
+            job = self._load_editable(job_id)
+            yield job
+            if save:
+                with self._lock:
+                    if self._is_active(job_id):  # started meanwhile (should not happen)
+                        raise JobStateError("This video started processing; the edit was dropped.")
+                    job.save()
+
+    def apply_edits(self, job_id: str, prepare: Callable[[Job], None]) -> Job:
+        """Run ``prepare(job)`` on the editable job, save it and start the apply pipeline
+        (subtitles, align, mix, render; never synthesize)."""
+        with self._job_lock(job_id):
+            job = self._load_editable(job_id)
+            prepare(job)
+            job.completed_stages = [
+                name for name in job.completed_stages if name not in APPLY_STAGES
+            ]
+            job.status = JobStatus.PAUSED  # so the run starts from a resumable state
+            job.message = ""
+            return self._enqueue(job, approve=False, factory=self.apply_factory)

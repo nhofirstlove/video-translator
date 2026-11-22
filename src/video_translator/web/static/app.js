@@ -30,7 +30,7 @@
     Hardware: "Computer",
     Device: "Processing device",
     GEMINI_API_KEY: "Gemini key (translation)",
-    ELEVENLABS_API_KEY: "ElevenLabs key (voice)",
+    vieneu: "Voice engine (VieNeu-TTS)",
     Config: "Settings file"
   };
 
@@ -128,13 +128,8 @@
       var parts = [];
       parts.push("Review before dubbing: " + (cfg.review ? "on" : "off"));
       parts.push("Chunks: " + cfg.chunk_minutes + " min");
-      var el11 = cfg.elevenlabs || {};
-      if (el11.characters_used_this_month != null) {
-        parts.push("ElevenLabs this month: " + el11.characters_used_this_month + " / " +
-          el11.monthly_character_budget + " characters");
-      } else {
-        parts.push("ElevenLabs budget: " + el11.monthly_character_budget + " characters per month");
-      }
+      var vn = cfg.vieneu || {};
+      if (vn.voice) parts.push("Voice: " + vn.voice + " (free, runs on your computer)");
       $("config-summary").textContent = parts.join("  |  ");
     }).catch(function () { $("config-summary").textContent = ""; });
   }
@@ -330,7 +325,7 @@
       : "";
 
     // Rebuild the buttons only when the state changes, so focus is not lost while polling.
-    var key = [status, job.downloads.video, job.downloads.srt].join("|");
+    var key = [status, job.downloads.video, job.downloads.srt, job.segments > 0].join("|");
     if (card.key !== key) {
       card.key = key;
       buildActions(card, job);
@@ -347,6 +342,8 @@
       dirtyJobs[job.id] = 0;
     }
   }
+
+  var EDITOR_STATUSES = ["awaiting_review", "paused", "done", "failed"];
 
   function buildActions(card, job) {
     var actions = card.parts.actions;
@@ -370,6 +367,10 @@
       if (!job.downloads.video && !job.downloads.srt) {
         actions.appendChild(el("span", { class: "muted", text: "Finished, but no output file was found." }));
       }
+    }
+    if (job.segments > 0 && EDITOR_STATUSES.indexOf(job.status) !== -1) {
+      actions.appendChild(el("a", { class: "btn", href: "/editor/" + job.id, text: "Open editor",
+        title: "Edit lines and times, regenerate voices and re-render" }));
     }
   }
 

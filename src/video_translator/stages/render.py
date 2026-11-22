@@ -4,8 +4,10 @@ Inputs:  job.input_path, artifacts['mixed_audio'], optional artifacts['srt']
 Outputs: artifacts['output'] (``<output_dir>/<name>.vi.mp4``) and, if there are
          subtitles, artifacts['srt_output'] (``<output_dir>/<name>.vi.srt``).
 
-The video stream is copied (no re-encode). The audio is encoded to AAC; if it is shorter
-than the video it is padded with silence, and the result never outlasts the video.
+The video stream is copied (no re-encode), unless the blur box is on (``config.blur`` or the
+choice saved for this video): then the box is blurred, the Vietnamese subtitles are burned in
+on top of it and the video is re-encoded (H.264, slower). The audio is encoded to AAC; if it is
+shorter than the video it is padded with silence, and the result never outlasts the video.
 """
 
 from __future__ import annotations
@@ -14,11 +16,17 @@ import os
 import shutil
 from pathlib import Path
 
+from video_translator.blur import (
+    build_ass,
+    build_filter_graph,
+    effective_blur,
+    resolve_box,
+)
 from video_translator.config import AppConfig
 from video_translator.models import Job
 from video_translator.paths import resolve_path, safe_name
 from video_translator.stages.base import Stage
-from video_translator.utils.ffmpeg import probe_duration, run_ffmpeg
+from video_translator.utils.ffmpeg import probe_duration, probe_video_size, run_ffmpeg
 
 AUDIO_BITRATE = "192k"
 
@@ -39,17 +47,21 @@ class RenderStage(Stage):
         stem = safe_name(video.stem)
         target = out_dir / f"{stem}.vi.mp4"
         tmp = out_dir / f"{stem}.vi.part.mp4"
+        blur = effective_blur(config, job.blur_overrides)
         try:
-            run_ffmpeg(
-                [
-                    "-i", video, "-i", mixed,
-                    "-map", "0:v:0", "-map", "1:a:0",
-                    "-c:v", "copy", "-c:a", "aac", "-b:a", AUDIO_BITRATE,
-                    "-af", "apad", "-t", f"{probe_duration(video):.3f}",
-                    "-movflags", "+faststart", tmp,
-                ],
-                desc="render video",
-            )  # fmt: skip
+            if blur.enabled:
+                self._render_with_blur(job, blur, video, mixed, tmp)
+            else:
+                run_ffmpeg(
+                    [
+                        "-i", video, "-i", mixed,
+                        "-map", "0:v:0", "-map", "1:a:0",
+                        "-c:v", "copy", "-c:a", "aac", "-b:a", AUDIO_BITRATE,
+                        "-af", "apad", "-t", f"{probe_duration(video):.3f}",
+                        "-movflags", "+faststart", tmp,
+                    ],
+                    desc="render video",
+                )  # fmt: skip
             os.replace(tmp, target)
         finally:
             tmp.unlink(missing_ok=True)
@@ -61,3 +73,24 @@ class RenderStage(Stage):
             shutil.copyfile(srt, srt_target)
             job.artifacts["srt_output"] = srt_target
         return job
+
+    def _render_with_blur(self, job: Job, blur, video: Path, mixed, tmp: Path) -> None:
+        width, height = probe_video_size(video)
+        box = resolve_box(blur, width, height)
+        ass = job.work_dir / "subtitles" / "blur.ass"
+        ass.parent.mkdir(parents=True, exist_ok=True)
+        ass.write_text(build_ass(job.segments, blur, box, width, height), encoding="utf-8")
+        job.message = "Rendering with the blur box (the video is re-encoded, this takes a while)"
+        job.save()
+        run_ffmpeg(
+            [
+                "-i", video, "-i", mixed,
+                "-filter_complex", build_filter_graph(blur, box, ass),
+                "-map", "[v]", "-map", "1:a:0",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", AUDIO_BITRATE,
+                "-af", "apad", "-t", f"{probe_duration(video):.3f}",
+                "-movflags", "+faststart", tmp,
+            ],
+            desc="render video with the blur box",
+        )  # fmt: skip

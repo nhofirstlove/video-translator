@@ -328,20 +328,15 @@ def test_doctor_endpoint_reports_failures(client, monkeypatch):
 
 def test_config_summary_has_no_secrets(client, monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "sk-super-secret")
-    monkeypatch.setenv("ELEVENLABS_API_KEY", "el-super-secret")
     res = client.get("/api/config/summary")
     body = res.json()
     assert body["review"] is True
-    assert body["chunk_minutes"] == 10
-    assert body["providers"] == {"asr": "gemini", "translation": "gemini", "tts": "elevenlabs"}
-    assert body["elevenlabs"]["monthly_character_budget"] == 10000
-    assert body["keys_set"] == {"gemini": True, "elevenlabs": True}
+    assert body["chunk_minutes"] == 5
+    assert body["providers"] == {"asr": "whisper_gemini", "translation": "gemini", "tts": "vieneu"}
+    assert body["vieneu"] == {"mode": "library", "voice": "Trúc Ly"}
+    assert body["keys_set"] == {"gemini": True}
+    assert body["budget"] is None
     assert "super-secret" not in res.text
-
-
-def test_config_summary_usage_is_none_or_int(client):
-    used = client.get("/api/config/summary").json()["elevenlabs"]["characters_used_this_month"]
-    assert used is None or isinstance(used, int)
 
 
 def test_frontend_never_uses_innerhtml():

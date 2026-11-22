@@ -8,8 +8,15 @@ from pathlib import Path
 import pytest
 
 from video_translator.config import AppConfig
-from video_translator.models import Job, Segment
-from video_translator.stages.mix import MixStage, build_graph, duck_filters, speech_ranges
+from video_translator.models import Chunk, Job, Segment
+from video_translator.stages.mix import (
+    MixStage,
+    build_graph,
+    duck_filters,
+    merge_spans,
+    mute_filters,
+    speech_ranges,
+)
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
@@ -143,3 +150,64 @@ def test_300_segments_performance(tmp_path):
     assert elapsed < 120, f"mix took {elapsed:.0f}s"
     mixed = job.artifacts["mixed_audio"]
     assert rms(mixed, 0.0, 0.1) > rms(mixed, 300.5, 300.9) * 2  # ducked inside speech
+
+
+# --- bleep tones are silenced in the original ---------------------------------------------------
+
+
+def make_beep_job(tmp_path):
+    """Original = 440 Hz music with a 1480 Hz bleep from 3.0 to 4.0 s (as a 16 kHz chunk too)."""
+    job = make_job(tmp_path, total=10.0, speech=((8.0, 9.0),))
+    rate = 16000
+    n = 10 * rate
+    music = [math.sin(2 * math.pi * 440 * i / rate) for i in range(n)]
+    for i in range(3 * rate, 4 * rate):
+        music[i] = math.sin(2 * math.pi * 1480 * i / rate)
+    samples = array.array("h", (int(0.3 * 32767 * v) for v in music))
+    chunk = job.work_dir / "chunk_000.wav"
+    with wave.open(str(chunk), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(samples.tobytes())
+    job.chunks.append(Chunk(index=0, start=0.0, end=10.0, path=chunk))
+    # the 48 kHz original the mix reads, with the same content
+    rate48 = 48000
+    orig = array.array("h", bytes(2 * 10 * rate48))
+    for i in range(10 * rate48):
+        f = 1480 if 3 * rate48 <= i < 4 * rate48 else 440
+        orig[i] = int(0.3 * 32767 * math.sin(2 * math.pi * f * i / rate48))
+    with wave.open(str(job.artifacts["audio"]), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate48)
+        w.writeframes(orig.tobytes())
+    return job
+
+
+def test_mute_filters_and_merge():
+    assert mute_filters([]) == []
+    (f,) = mute_filters([(3.0, 4.0), (10.0, 10.5)])
+    assert f == "volume=0:enable='between(t,2.950,4.050)+between(t,9.950,10.550)'"
+    assert merge_spans([(5.0, 6.0), (1.0, 2.0), (2.05, 3.0)]) == [(1.0, 3.0), (5.0, 6.0)]
+    assert "volume=0:enable" in build_graph([], AppConfig(), None, [(3.0, 4.0)])
+    assert "volume=0:enable" not in build_graph([], AppConfig())
+
+
+def test_beep_is_silenced_and_music_stays(tmp_path):
+    job = make_beep_job(tmp_path)
+    MixStage().run(job, AppConfig())
+    mixed = job.artifacts["mixed_audio"]
+    music = rms(mixed, 1.0, 2.5)
+    assert rms(mixed, 3.3, 3.7) < 0.02 * music  # the bleep is gone
+    assert rms(mixed, 5.0, 7.0) == pytest.approx(music, rel=0.15)
+    assert "1 beeps silenced" in job.message
+
+
+def test_beep_stays_when_removal_is_turned_off(tmp_path):
+    job = make_beep_job(tmp_path)
+    cfg = AppConfig()
+    cfg.audio.remove_beeps = False
+    MixStage().run(job, cfg)
+    mixed = job.artifacts["mixed_audio"]
+    assert rms(mixed, 3.3, 3.7) > 0.5 * rms(mixed, 1.0, 2.5)

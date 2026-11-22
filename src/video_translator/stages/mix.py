@@ -9,6 +9,10 @@ attack/release ramps. Nearby ranges (closer than the ramp time) are merged. The 
 split over a chain of ``volume`` filters with ~40 ranges each (each active only in its own time
 window), and the graph is passed as a script file, so the command line stays short on Windows
 however long the video is. After amix (normalize=0) a single-pass loudnorm evens the level.
+
+Bleep tones (a censored word replaced by a steady tone in the original) are found in the chunk
+audio files and silenced in the original completely, so only the Vietnamese voice says the word
+(setting ``audio.remove_beeps: false`` keeps them).
 """
 
 from __future__ import annotations
@@ -19,8 +23,9 @@ from pathlib import Path
 from video_translator.config import AppConfig
 from video_translator.models import Job
 from video_translator.stages.base import Stage
-from video_translator.utils.ffmpeg import run_ffmpeg
+from video_translator.utils.ffmpeg import run_ffmpeg_filter_file
 
+BEEP_MUTE_PAD = 0.05  # extra silence on each side of a detected beep
 ATTACK = 0.15
 RELEASE = 0.15
 RANGES_PER_FILTER = 40
@@ -69,13 +74,71 @@ def duck_filters(ranges: list[tuple[float, float]], ratio: float) -> list[str]:
     return filters
 
 
-def build_graph(ranges: list[tuple[float, float]], config: AppConfig) -> str:
-    audio = config.audio
+def mute_filters(spans: list[tuple[float, float]]) -> list[str]:
+    """``volume=0`` filters that silence the original exactly inside ``spans``."""
+    filters: list[str] = []
+    for i in range(0, len(spans), RANGES_PER_FILTER):
+        group = spans[i : i + RANGES_PER_FILTER]
+        terms = "+".join(
+            f"between(t,{max(a - BEEP_MUTE_PAD, 0.0):.3f},{b + BEEP_MUTE_PAD:.3f})"
+            for a, b in group
+        )
+        filters.append(f"volume=0:enable='{terms}'")
+    return filters
+
+
+def merge_spans(spans: list[tuple[float, float]], gap: float = 0.1) -> list[tuple[float, float]]:
+    merged: list[list[float]] = []
+    for a, b in sorted(spans):
+        if merged and a - merged[-1][1] <= gap:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    return [(a, b) for a, b in merged]
+
+
+def find_beep_spans(job: Job) -> list[tuple[float, float]]:
+    """Beep tones in the original audio, as ``(start, end)`` seconds from the video start."""
+    from video_translator.providers.asr.whisper_timing import (
+        WhisperError,
+        decode_audio_16k,
+        detect_beeps,
+    )
+
+    sources: list[tuple[Path, float]] = [
+        (Path(c.path), c.start) for c in job.chunks if Path(c.path).is_file()
+    ]
+    if not sources and job.artifacts.get("audio"):
+        sources = [(Path(job.artifacts["audio"]), 0.0)]
+    spans: list[tuple[float, float]] = []
+    for path, offset in sources:
+        try:
+            found = detect_beeps(decode_audio_16k(path))
+        except WhisperError:
+            continue
+        spans.extend((offset + a, offset + b) for a, b in found)
+    return merge_spans(spans)
+
+
+def effective_audio(config: AppConfig, overrides: dict[str, float] | None = None):
+    """The ``AudioConfig`` with the volumes chosen in the editor (``job.audio_overrides``)."""
+    known = {k: v for k, v in (overrides or {}).items() if k in type(config.audio).model_fields}
+    return config.audio.model_copy(update=known)
+
+
+def build_graph(
+    ranges: list[tuple[float, float]],
+    config: AppConfig,
+    overrides: dict[str, float] | None = None,
+    mute: list[tuple[float, float]] | None = None,
+) -> str:
+    audio = effective_audio(config, overrides)
     bg = audio.background_volume
     ratio = min(audio.ducked_volume / bg, 1.0) if bg > 0 else 1.0
     bg_chain = [
         f"aresample={OUT_RATE}",
         "aformat=sample_fmts=fltp:channel_layouts=stereo",
+        *mute_filters(mute or []),
         f"volume={bg:.4f}",
         *duck_filters(ranges, ratio),
     ]
@@ -103,27 +166,19 @@ class MixStage(Stage):
         if not voice or not Path(voice).is_file():
             raise FileNotFoundError("The voice track (artifacts['voice_track']) is missing.")
         ranges = speech_ranges(job)
+        beeps = find_beep_spans(job) if config.audio.remove_beeps else []
         script = job.work_dir / "mix_filter.txt"
-        script.write_text(build_graph(ranges, config), encoding="utf-8")
+        script.write_text(build_graph(ranges, config, job.audio_overrides, beeps), encoding="utf-8")
         out = job.work_dir / "mixed.wav"
         tmp = job.work_dir / "mixed.part.wav"
-        run_ffmpeg(
-            [
-                "-i",
-                original,
-                "-i",
-                voice,
-                "-filter_complex_script",
-                script,
-                "-map",
-                "[out]",
-                "-c:a",
-                "pcm_s16le",
-                tmp,
-            ],
+        run_ffmpeg_filter_file(
+            ["-i", original, "-i", voice],
+            script,
+            ["-map", "[out]", "-c:a", "pcm_s16le", tmp],
             desc="mix voice and background",
         )
         tmp.replace(out)
         job.artifacts["mixed_audio"] = out
-        job.message = f"Mixed audio ready ({len(ranges)} speech passages ducked)"
+        note = f", {len(beeps)} beeps silenced" if beeps else ""
+        job.message = f"Mixed audio ready ({len(ranges)} speech passages ducked{note})"
         return job

@@ -19,7 +19,9 @@ from video_translator.config import AppConfig
 from video_translator.models import Chunk, Job, JobStatus, Segment
 from video_translator.providers import registry
 from video_translator.providers.asr import gemini as _gemini  # noqa: F401  (registers "gemini")
+from video_translator.providers.asr import whisper_gemini as _wg  # noqa: F401  (registers it)
 from video_translator.providers.asr.base import ASRProvider
+from video_translator.providers.asr.whisper_timing import WhisperError
 from video_translator.providers.gemini_client import QuotaExhaustedError
 from video_translator.stages.base import PauseRequested, Stage
 
@@ -33,12 +35,13 @@ def _transcript_path(job: Job, chunk: Chunk) -> Path:
     return job.work_dir / "transcripts" / f"chunk_{chunk.index:03d}.json"
 
 
-def _load_cached(path: Path, chunk: Chunk) -> list[Segment] | None:
+def _load_cached(path: Path, chunk: Chunk, tag: str = "gemini") -> list[Segment] | None:
     """Segments (relative to the chunk) saved earlier, or None if absent/stale/corrupt."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if (
-            data.get("index") != chunk.index
+            data.get("provider", "gemini") != tag
+            or data.get("index") != chunk.index
             or abs(float(data["start"]) - chunk.start) > _TIME_TOLERANCE
             or abs(float(data["end"]) - chunk.end) > _TIME_TOLERANCE
         ):
@@ -48,9 +51,10 @@ def _load_cached(path: Path, chunk: Chunk) -> list[Segment] | None:
         return None
 
 
-def _save_cached(path: Path, chunk: Chunk, segments: list[Segment]) -> None:
+def _save_cached(path: Path, chunk: Chunk, segments: list[Segment], tag: str = "gemini") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
+        "provider": tag,
         "index": chunk.index,
         "start": chunk.start,
         "end": chunk.end,
@@ -130,7 +134,11 @@ class TranscribeStage(Stage):
         if self._provider is not None:
             return self._provider
         cls = registry.get("asr", config.providers.asr)
-        return cls(model=config.gemini.model, requests_per_minute=config.gemini.requests_per_minute)
+        return cls(
+            model=config.gemini.model,
+            requests_per_minute=config.gemini.requests_per_minute,
+            whisper=config.whisper,
+        )
 
     def run(self, job: Job, config: AppConfig) -> Job:
         if not job.chunks:
@@ -138,17 +146,20 @@ class TranscribeStage(Stage):
         provider = self._get_provider(config)
         chunks = sorted(job.chunks, key=lambda c: c.index)
         total = len(chunks)
+        tag = getattr(provider, "cache_tag", "gemini")
         results: list[tuple[Chunk, list[Segment]]] = []
 
         for number, chunk in enumerate(chunks, start=1):
             cache = _transcript_path(job, chunk)
-            local = _load_cached(cache, chunk)
+            local = _load_cached(cache, chunk, tag)
             if local is None:
                 job.message = f"Transcribing chunk {number}/{total}"
                 try:
                     local = provider.transcribe(
                         chunk.path, language="zh", duration=chunk.end - chunk.start
                     )
+                except WhisperError as exc:
+                    raise RuntimeError(f"Speech timing failed: {exc}") from exc
                 except QuotaExhaustedError as exc:
                     raise PauseRequested(
                         JobStatus.PAUSED,
@@ -156,7 +167,7 @@ class TranscribeStage(Stage):
                         f"(chunk {number}/{total}; {number - 1} finished chunks are saved). "
                         f"Try again later with `video-translator resume {job.work_dir}`.",
                     ) from exc
-                _save_cached(cache, chunk, local)
+                _save_cached(cache, chunk, local, tag)
             else:
                 job.message = f"Transcribing chunk {number}/{total} (already done)"
             shifted = [
@@ -166,5 +177,8 @@ class TranscribeStage(Stage):
             results.append((chunk, shifted))
 
         job.segments = merge_chunk_segments(results)
-        job.message = f"Transcribed {len(job.segments)} segments from {total} chunks"
+        notes = [n for n in getattr(provider, "notes", []) if n]
+        job.message = f"Transcribed {len(job.segments)} segments from {total} chunks" + (
+            f" ({'; '.join(notes)})" if notes else ""
+        )
         return job

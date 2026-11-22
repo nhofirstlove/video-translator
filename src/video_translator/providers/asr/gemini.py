@@ -31,6 +31,7 @@ Return ONLY strict JSON, with no markdown and no commentary, in exactly this sha
 {"segments": [{"start": 0.0, "end": 3.2, "text": "..."}]}
 """
 
+_MAX_GUESSED = 8.0  # a missing end is guessed at most this long after the start
 _MIN_LEN = 0.2  # shortest segment length produced by clamping, in seconds
 _FENCE_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*|\s*```$")
 _OBJECT_RE = re.compile(r"\{[^{}]*\}")
@@ -114,7 +115,7 @@ def parse_segments(raw: str, duration: float | None = None) -> list[Segment]:
             continue
         if end is None or end <= start:
             nxt = rows[i + 1][0] if i + 1 < len(rows) else None
-            end = nxt if nxt is not None and nxt > start else start + 2.0
+            end = min(nxt, start + _MAX_GUESSED) if nxt is not None and nxt > start else start + 2.0
         if duration is not None:
             end = min(end, duration)
             if end <= start:
@@ -140,7 +141,7 @@ class GeminiASR(ASRProvider):
         self,
         device: str = "cpu",
         client: GeminiClient | None = None,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.6-flash",
         requests_per_minute: int = 10,
         parse_retries: int = 1,
         **options: Any,

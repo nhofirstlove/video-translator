@@ -1,8 +1,13 @@
-"""TTS providers (Vietnamese text to speech). Importing this package registers "elevenlabs"."""
+"""TTS providers (Vietnamese text to speech). Importing this package registers "vieneu"."""
 
 from __future__ import annotations
 
-from video_translator.providers.tts import elevenlabs  # noqa: F401
-from video_translator.providers.tts.base import TTSProvider
+from video_translator.providers.tts import vieneu  # noqa: F401
+from video_translator.providers.tts.base import (
+    TTSError,
+    TTSProvider,
+    TTSSetupError,
+    TTSVoiceError,
+)
 
-__all__ = ["TTSProvider"]
+__all__ = ["TTSError", "TTSProvider", "TTSSetupError", "TTSVoiceError"]

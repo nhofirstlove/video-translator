@@ -24,20 +24,54 @@ class _Model(BaseModel):
 
 
 class ProvidersConfig(_Model):
-    asr: Literal["gemini"] = "gemini"
+    asr: Literal["whisper_gemini", "gemini"] = "whisper_gemini"
     translation: Literal["gemini"] = "gemini"
-    tts: Literal["elevenlabs"] = "elevenlabs"
+    tts: Literal["vieneu"] = "vieneu"
 
 
 class GeminiConfig(_Model):
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.6-flash"
     requests_per_minute: int = Field(10, gt=0)
 
 
-class ElevenLabsConfig(_Model):
-    voice: str = ""
-    model: str = "eleven_multilingual_v2"
-    monthly_character_budget: int = Field(10000, ge=0)
+class WhisperConfig(_Model):
+    """Local speech timing (faster-whisper, CPU). Used by providers.asr = whisper_gemini."""
+
+    model: str = "medium"  # tiny, base, small, medium (about 0.8 GB), large-v3 (slow on CPU)
+    compute_type: Literal["int8", "float32"] = "int8"
+    beam_size: int = Field(1, gt=0)
+    cpu_threads: int = Field(0, ge=0)  # 0 = let the library choose
+    max_segment_seconds: float = Field(12.0, gt=1.5)
+    detect_beeps: bool = True  # cut lines at bleep tones so the bleeped word gets its own line
+    pause_seconds: float = Field(0.4, ge=0.1, le=3.0)  # a pause this long starts a new line
+    vad_threshold: float = Field(0.3, gt=0.0, lt=1.0)  # lower = hears quieter speech
+    model_dir: str | None = None  # where to keep the downloaded model (None = default cache)
+
+
+class VieNeuConfig(_Model):
+    mode: Literal["library", "server"] = "library"
+    voice: str = "Trúc Ly"
+    precision: Literal["fp32", "int8"] = "fp32"
+    server_url: str = "http://localhost:8000"
+    timeout_seconds: float = Field(300, gt=0)
+
+
+class BlurConfig(_Model):
+    """A blurred box over the burned-in Chinese subtitles, with the Vietnamese ones on top.
+
+    Sizes and positions are in pixels of the ORIGINAL video. ``x`` / ``y`` left empty mean
+    "centred" and "near the bottom". Switching it on makes the render re-encode the video.
+    """
+
+    enabled: bool = False
+    x: int | None = Field(None, ge=0)
+    y: int | None = Field(None, ge=0)
+    width: int = Field(1100, ge=16)
+    height: int = Field(130, ge=16)
+    strength: int = Field(70, ge=1, le=100)  # 100 = strongest blur
+    tint: float = Field(0.0, ge=0.0, le=0.9)  # optional dark layer over the blur, 0 = none
+    font_size: int = Field(40, ge=8, le=300)  # Vietnamese text height in pixels of the video
+    font: str = "Arial"
 
 
 class SubtitlesConfig(_Model):
@@ -49,6 +83,9 @@ class AudioConfig(_Model):
     voice_volume: float = Field(1.0, ge=0)
     background_volume: float = Field(1.0, ge=0)
     ducked_volume: float = Field(0.25, ge=0)
+    remove_beeps: bool = (
+        True  # silence the original bleep tones (the Vietnamese voice says the word)
+    )
 
 
 class PathsConfig(_Model):
@@ -61,10 +98,12 @@ class AppConfig(_Model):
     device: Literal["auto", "cuda", "cpu"] = "auto"
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
-    elevenlabs: ElevenLabsConfig = Field(default_factory=ElevenLabsConfig)
-    chunk_minutes: int = Field(10, gt=0)
+    whisper: WhisperConfig = Field(default_factory=WhisperConfig)
+    vieneu: VieNeuConfig = Field(default_factory=VieNeuConfig)
+    chunk_minutes: int = Field(5, gt=0)
     review: bool = True
     subtitles: SubtitlesConfig = Field(default_factory=SubtitlesConfig)
+    blur: BlurConfig = Field(default_factory=BlurConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
 
@@ -123,3 +162,27 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in exc.errors()
         )
         raise ConfigError(f"Invalid configuration: {problems}") from exc
+
+
+def save_local_override(section: str, values: dict[str, Any]) -> Path:
+    """Merge ``{section: values}`` into ``config/local.yaml`` (next to the default config).
+
+    Used by the editor's "save as default" button. Comments in local.yaml are not kept.
+    """
+    base = find_default_config()
+    if base is None:
+        raise ConfigError("There is no config folder to save the default into.")
+    target = base.parent / LOCAL_CONFIG_NAME
+    data = _read_yaml(target) if target.is_file() else {}
+    data = deep_merge(data, {section: values})
+    try:
+        AppConfig.model_validate(deep_merge(_read_yaml(base), data))
+    except ValidationError as exc:
+        raise ConfigError(f"Invalid value: {exc.errors()[0]['msg']}") from exc
+    tmp = target.with_suffix(".yaml.tmp")
+    try:
+        tmp.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError as exc:
+        raise ConfigError(f"Cannot write {target}: {exc}") from exc
+    return target

@@ -1,4 +1,4 @@
-"""Command line interface: ``run``, ``resume``, ``serve`` and ``doctor``."""
+"""Command line interface: ``run``, ``resume``, ``serve``, ``doctor``, ``voices`` and ``say``."""
 
 from __future__ import annotations
 
@@ -28,7 +28,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--approve", action="store_true", help="approve the reviewed translation and continue"
     )
 
-    sub.add_parser("doctor", help="check that this computer is ready (ffmpeg, keys, config)")
+    sub.add_parser("doctor", help="check that this computer is ready (ffmpeg, keys, voice, config)")
+
+    sub.add_parser("voices", help="list the preset VieNeu voices")
+
+    say = sub.add_parser("say", help="speak one sample sentence with the configured voice")
+    say.add_argument("text", help="Vietnamese text to speak")
+    say.add_argument("--voice", default=None, help="voice name (see `video-translator voices`)")
+    say.add_argument("--out", default="say.wav", help="output audio file (default: say.wav)")
+    say.add_argument("--config", default=None, help="path to a YAML config file")
 
     serve = sub.add_parser("serve", help="start the local web UI")
     serve.add_argument("--host", default="127.0.0.1")
@@ -86,6 +94,53 @@ def resume_command(job_dir: str, config_path: str | None, approve: bool) -> int:
     return _execute(job, config)
 
 
+def voices_command(config_path: str | None = None) -> int:
+    from video_translator import synth_line
+    from video_translator.providers.tts.base import TTSError
+
+    try:
+        config = load_config(config_path)
+        provider = synth_line.default_tts_factory(config)
+        if config.vieneu.mode == "server":
+            print(
+                "Server mode: the voices are chosen by the VieNeu server, so they cannot be "
+                "listed here. Set `vieneu.voice` in config/local.yaml (for example 'Mai Anh')."
+            )
+            return 0
+        names = provider.list_voices()
+    except ConfigError as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 1
+    except TTSError as exc:
+        print(f"Cannot list the voices: {exc}", file=sys.stderr)
+        return 1
+    if not names:
+        print("No preset voices were reported.")
+        return 0
+    print('Preset voices (set one with `vieneu: {voice: "NAME"}` in config/local.yaml):')
+    for name in names:
+        print(f"  {name}")
+    return 0
+
+
+def say_command(text: str, voice: str | None, out: str, config_path: str | None = None) -> int:
+    from video_translator import synth_line
+    from video_translator.providers.tts.base import TTSError
+
+    try:
+        config = load_config(config_path)
+        provider = synth_line.default_tts_factory(config)
+        path = provider.synthesize(text, Path(out).expanduser(), voice)
+    except ConfigError as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 1
+    except TTSError as exc:
+        print(f"Could not speak the text: {exc}", file=sys.stderr)
+        return 1
+    print(f"Saved: {path}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     from dotenv import load_dotenv
 
@@ -95,6 +150,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from video_translator.doctor import main as doctor_main
 
         return doctor_main()
+    if args.command == "voices":
+        return voices_command()
+    if args.command == "say":
+        return say_command(args.text, args.voice, args.out, args.config)
     if args.command == "run":
         return run_command(args.video, args.config)
     if args.command == "resume":

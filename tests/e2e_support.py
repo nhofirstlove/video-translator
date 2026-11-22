@@ -1,7 +1,7 @@
-"""Shared fakes for the end-to-end tests: a synthetic video plus fake Gemini and ElevenLabs.
+"""Shared fakes for the end-to-end tests: a synthetic video plus fake Gemini and VieNeu.
 
 Nothing here touches the network. The fakes replace only the lowest layer (the transports the
-real ``GeminiClient`` and ``ElevenLabsTTS`` call), so the real stages, providers, prompts,
+real ``GeminiClient`` and ``VieNeuTTS`` call), so the real stages, providers, prompts,
 parsers, retry/quota handling and the pipeline all run.
 """
 
@@ -29,8 +29,8 @@ needs_ffmpeg = pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg/ffprobe not in
 
 VIDEO_SECONDS = 40
 BED_FREQS = (220, 330)  # the "music" under the speech
-VOICE_FREQ = 1000  # the fake "ElevenLabs voice"
-VOICE_ID = "voice-test-123"
+VOICE_FREQ = 1000  # the fake "VieNeu voice"
+VOICE_NAME = "Mai Anh"
 SECONDS_PER_CHAR = 0.08
 CHUNK_MINUTES = 0.2  # 12 s chunks: a 40 s video gives 3 overlapping chunks
 CHUNK_SECONDS = CHUNK_MINUTES * 60
@@ -135,45 +135,51 @@ class FakeGemini:
         return json.dumps({"segments": items}, ensure_ascii=False)
 
 
-class FakeElevenLabs:
-    """Stands in for the ElevenLabs transport: a real mp3 whose length follows the text length."""
+class FakeVieNeu:
+    """Stands in for the VieNeu transport: a real wav whose length follows the text length."""
 
-    def __init__(self, work_dir: Path) -> None:
+    def __init__(self, work_dir: Path = Path(".")) -> None:
         self.work_dir = work_dir
-        self.calls: list[tuple[str, str, str]] = []
+        self.calls: list[tuple[str, str]] = []  # (text, voice)
+        self.fail_on: str | None = None  # raise TTSError when the text contains this
 
-    def convert(self, text: str, voice_id: str, model_id: str) -> bytes:
-        self.calls.append((text, voice_id, model_id))
-        self.work_dir.mkdir(parents=True, exist_ok=True)
-        out = self.work_dir / f"fake_{len(self.calls)}.mp3"
+    def synthesize(self, text: str, voice: str, out_path: Path) -> None:
+        from video_translator.providers.tts.base import TTSError
+
+        self.calls.append((text, voice))
+        if self.fail_on is not None and self.fail_on in text:
+            raise TTSError("the fake voice engine broke")
         seconds = max(0.3, len(text) * SECONDS_PER_CHAR)
-        run_ffmpeg(
-            [
-                "-f", "lavfi", "-i", f"sine=frequency={VOICE_FREQ}:duration={seconds:.3f}",
-                "-c:a", "libmp3lame", "-b:a", "64k", str(out),
-            ],
-            desc="fake tts",
-        )  # fmt: skip
-        return out.read_bytes()
+        rate = 48000
+        frames = b"".join(
+            struct.pack("<h", int(12000 * math.sin(2 * math.pi * VOICE_FREQ * n / rate)))
+            for n in range(int(seconds * rate))
+        )
+        with wave.open(str(out_path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(frames)
 
-    def list_voices(self) -> list[dict[str, str]]:
-        return []
+    def list_voices(self) -> list[tuple[str, str]]:
+        return [("Minh Quân", "minh-quan"), ("Mai Anh", "mai-anh"), ("Trúc Ly", "truc-ly")]
 
 
 class Fakes:
-    def __init__(self, gemini: FakeGemini, tts: FakeElevenLabs) -> None:
+    def __init__(self, gemini: FakeGemini, tts: FakeVieNeu) -> None:
         self.gemini = gemini
         self.tts = tts
 
 
 def make_config(tmp_path: Path, **overrides) -> AppConfig:
-    """Config for tests: private folders, tiny chunks, fast rate limit, a voice id."""
+    """Config for tests: private folders, tiny chunks, fast rate limit, a voice name."""
     config = AppConfig()
+    config.providers.asr = "gemini"  # the old Gemini-only path: no Whisper model in these tests
     config.paths.input = tmp_path / "data" / "input"
     config.paths.work = tmp_path / "data" / "work"
     config.paths.output = tmp_path / "data" / "output"
     config.gemini.requests_per_minute = 1000
-    config.elevenlabs.voice = VOICE_ID
+    config.vieneu.voice = VOICE_NAME
     config = config.model_copy(update={"chunk_minutes": CHUNK_MINUTES})  # no validation: < 1 min
     for key, value in overrides.items():
         setattr(config, key, value)
@@ -181,14 +187,13 @@ def make_config(tmp_path: Path, **overrides) -> AppConfig:
 
 
 def install_fakes(monkeypatch, tmp_path: Path) -> Fakes:
-    """Replace the Gemini and ElevenLabs transports (and use small translation batches)."""
+    """Replace the Gemini and VieNeu transports (and use small translation batches)."""
     from video_translator.providers import gemini_client
-    from video_translator.providers.tts import elevenlabs
+    from video_translator.providers.tts import vieneu
 
-    fakes = Fakes(FakeGemini(), FakeElevenLabs(tmp_path / "fake_tts"))
+    fakes = Fakes(FakeGemini(), FakeVieNeu(tmp_path / "fake_tts"))
     monkeypatch.setattr(gemini_client, "_SdkTransport", lambda api_key, model: fakes.gemini)
-    monkeypatch.setattr(elevenlabs, "_SdkTransport", lambda api_key: fakes.tts)
-    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    monkeypatch.setattr(vieneu, "_LibraryTransport", lambda precision="fp32": fakes.tts)
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
     class SmallBatchTranslation(GeminiTranslation):

@@ -31,6 +31,7 @@ from video_translator.utils.ffmpeg import probe_duration, run_ffmpeg
 SAMPLE_RATE = 48000
 GAP = 0.1  # keep this much silence before the next clip when stretching into the gap
 MAX_SPEEDUP = 1.3
+FIT_FLAGS = ("too_long", "truncated", "needs_realign")
 MIN_SLOWDOWN = 0.9
 SHORT_RATIO = 0.6
 FADE = 0.08
@@ -79,9 +80,39 @@ def plan_clip(
     return tempo, flags, cut_to
 
 
-def _align_clip(src: Path, dst: Path, slot: float, available: float, limit: float | None):
+def plan_clip_with_speed(
+    duration: float, speed: float, available: float, limit: float | None
+) -> tuple[float, list[str], float | None]:
+    """Like ``plan_clip`` but with the user's tempo ``speed`` on the raw clip.
+
+    The clip is still cut (80 ms fade-out) if it would run into the next clip.
+    """
+    flags: list[str] = []
+    new_duration = duration / speed
+    if new_duration > available + 1e-6:
+        flags.append("too_long")
+    cut_to = None
+    if limit is not None and new_duration > limit:
+        cut_to = limit
+        if "too_long" not in flags:
+            flags.append("too_long")
+        flags.append("truncated")
+    return speed, flags, cut_to
+
+
+def _align_clip(
+    src: Path,
+    dst: Path,
+    slot: float,
+    available: float,
+    limit: float | None,
+    speed: float | None = None,
+):
     duration = probe_duration(src)
-    tempo, flags, cut_to = plan_clip(duration, slot, available, limit)
+    if speed is not None:
+        tempo, flags, cut_to = plan_clip_with_speed(duration, speed, available, limit)
+    else:
+        tempo, flags, cut_to = plan_clip(duration, slot, available, limit)
     filters = atempo_chain(tempo)
     if cut_to is not None:
         filters.append(f"atrim=end={cut_to:.4f}")
@@ -92,6 +123,66 @@ def _align_clip(src: Path, dst: Path, slot: float, available: float, limit: floa
     args += ["-ac", "1", "-ar", SAMPLE_RATE, "-c:a", "pcm_s16le", dst]
     run_ffmpeg(args, desc=f"align {src.name}")
     return flags
+
+
+def has_clip(seg: Segment) -> bool:
+    return bool(seg.audio_path and Path(seg.audio_path).is_file())
+
+
+def clip_window(
+    segs: list[Segment], index: int, total: float | None
+) -> tuple[float, float, float | None]:
+    """``(slot, available, limit)`` for segment ``index`` among the segments that have a clip.
+
+    The neighbours are the segments with a raw clip, ordered by start time (the same rule the
+    align stage uses), so one line can be re-fitted without touching the others.
+    """
+    order = sorted(
+        (i for i, s in enumerate(segs) if has_clip(s) or i == index), key=lambda i: segs[i].start
+    )
+    pos = order.index(index)
+    seg = segs[index]
+    slot = max(seg.end - seg.start, 0.05)
+    if pos + 1 < len(order):
+        next_start = segs[order[pos + 1]].start
+        return (
+            slot,
+            max(slot, next_start - GAP - seg.start),
+            max(next_start - seg.start, MIN_LIMIT),
+        )
+    available = slot if total is None else max(slot, total - seg.start)
+    return slot, available, None
+
+
+def _original_duration(job: Job) -> float | None:
+    audio = job.artifacts.get("audio")
+    return probe_duration(audio) if audio and Path(audio).is_file() else None
+
+
+def fit_segment(job: Job, index: int, total: float | None = None) -> Segment:
+    """Re-create the aligned clip of ONE segment from its raw clip, honouring ``segment.speed``.
+
+    Updates ``aligned_path`` and the fit flags (``too_long``, ``truncated``, ``needs_realign``
+    are recomputed). The voice track is not rebuilt; call ``rebuild_voice_track`` for that.
+    """
+    seg = job.segments[index]
+    if not has_clip(seg):
+        raise FileNotFoundError(f"Line {index + 1} has no voice clip yet.")
+    if total is None:
+        total = _original_duration(job)
+    slot, available, limit = clip_window(job.segments, index, total)
+    aligned_dir = job.work_dir / "aligned"
+    aligned_dir.mkdir(parents=True, exist_ok=True)
+    dst = aligned_dir / f"seg_{index:05d}.wav"
+    tmp = dst.with_name(f"seg_{index:05d}.part.wav")
+    try:
+        flags = _align_clip(Path(seg.audio_path), tmp, slot, available, limit, seg.speed)
+        os.replace(tmp, dst)
+    finally:
+        tmp.unlink(missing_ok=True)
+    seg.aligned_path = dst
+    seg.flags = [f for f in seg.flags if f not in FIT_FLAGS] + flags
+    return seg
 
 
 def _mix_into(buf: bytearray, clip: bytes) -> bytearray:
@@ -159,6 +250,24 @@ def build_voice_track(
     return out_path
 
 
+def rebuild_voice_track(job: Job, total: float | None = None) -> Path:
+    """Rebuild ``artifacts['voice_track']`` from the current aligned clips of the job."""
+    segs = job.segments
+    if total is None:
+        total = _original_duration(job)
+    if total is None:
+        total = max((s.end for s in segs), default=0.0)
+    placements = [
+        (seg.start, Path(seg.aligned_path))
+        for seg in sorted(segs, key=lambda s: s.start)
+        if seg.aligned_path and Path(seg.aligned_path).is_file()
+    ]
+    job.artifacts["voice_track"] = build_voice_track(
+        placements, total, job.work_dir / "voice_track.wav"
+    )
+    return Path(job.artifacts["voice_track"])
+
+
 class AlignStage(Stage):
     name = "align"
 
@@ -187,11 +296,11 @@ class AlignStage(Stage):
                 end_of_audio = total if total is not None else None
                 available = slot if end_of_audio is None else max(slot, end_of_audio - seg.start)
                 limit = None
-            tasks.append((i, Path(seg.audio_path), dst, slot, available, limit))
+            tasks.append((i, Path(seg.audio_path), dst, slot, available, limit, seg.speed))
 
         def work(task):
-            i, src, dst, slot, available, limit = task
-            return i, dst, _align_clip(src, dst, slot, available, limit)
+            i, src, dst, slot, available, limit, speed = task
+            return i, dst, _align_clip(src, dst, slot, available, limit, speed)
 
         workers = max(1, min(4, os.cpu_count() or 1))
         with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -204,15 +313,9 @@ class AlignStage(Stage):
         job.save()
 
         placements = [
-            (segs[i].start, Path(segs[i].aligned_path))
-            for i in order
-            if segs[i].aligned_path and Path(segs[i].aligned_path).is_file()
+            i for i in order if segs[i].aligned_path and Path(segs[i].aligned_path).is_file()
         ]
-        if total is None:
-            total = max((s.end for s in segs), default=0.0)
-        job.artifacts["voice_track"] = build_voice_track(
-            placements, total, job.work_dir / "voice_track.wav"
-        )
+        rebuild_voice_track(job, total)
         job.message = self._summary(segs, len(placements))
         return job
 

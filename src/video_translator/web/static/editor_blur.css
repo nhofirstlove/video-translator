@@ -1,0 +1,46 @@
+/* Editor blur box (editor_blur.js). Uses the colour tokens of style.css. */
+.eb-box {
+  position: absolute; z-index: 3; box-sizing: border-box; cursor: move; touch-action: none;
+  border: 2px dashed rgba(255, 255, 255, 0.9); outline: 1px solid rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center; overflow: visible;
+}
+.eb-box.eb-ro { cursor: default; pointer-events: none; border-style: solid; border-color: rgba(255, 255, 255, 0.4); }
+.eb-text {
+  max-width: 100%; text-align: center; color: #fff; font-weight: 700; line-height: 1.2;
+  white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; padding: 0 2%;
+  font-family: Arial, "Segoe UI", "Noto Sans", sans-serif;
+}
+.eb-handle {
+  position: absolute; width: 12px; height: 12px; background: #fff; border: 2px solid #1f6feb;
+  border-radius: 3px; box-sizing: border-box; touch-action: none;
+}
+.eb-box.eb-ro .eb-handle { display: none; }
+.eb-n { top: -7px; left: calc(50% - 6px); cursor: ns-resize; }
+.eb-s { bottom: -7px; left: calc(50% - 6px); cursor: ns-resize; }
+.eb-e { right: -7px; top: calc(50% - 6px); cursor: ew-resize; }
+.eb-w { left: -7px; top: calc(50% - 6px); cursor: ew-resize; }
+.eb-ne { top: -7px; right: -7px; cursor: nesw-resize; }
+.eb-sw { bottom: -7px; left: -7px; cursor: nesw-resize; }
+.eb-nw { top: -7px; left: -7px; cursor: nwse-resize; }
+.eb-se { bottom: -7px; right: -7px; cursor: nwse-resize; }
+/* the burned-in version replaces the normal subtitle overlay while the box is on */
+.ed-stage.eb-on .ed-sub { display: none; }
+
+.eb-panel {
+  background: var(--card, #fff); border: 1px solid var(--border, #d9dde4); border-radius: 8px;
+  padding: 12px; display: grid; gap: 10px; font-size: 0.9rem;
+}
+.eb-title { font-size: 1rem; margin: 0; }
+.eb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 8px; }
+.eb-field { display: grid; gap: 3px; min-width: 0; }
+.eb-field input[type="number"] {
+  width: 100%; box-sizing: border-box; padding: 5px 6px; border: 1px solid var(--border, #d9dde4);
+  border-radius: 6px; background: var(--bg, #f4f5f7); color: inherit; font: inherit;
+}
+.eb-ranges { display: grid; gap: 8px; }
+.eb-range { grid-template-columns: minmax(8rem, 12rem) 1fr 3.5rem; align-items: center; gap: 8px; }
+.eb-range input { width: 100%; accent-color: var(--accent, #1f6feb); }
+.eb-value { text-align: right; font-variant-numeric: tabular-nums; }
+.eb-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.eb-hint, .eb-status { margin: 0; min-height: 1.2em; }
+.eb-bad { color: var(--fail, #b42318); font-weight: 600; }

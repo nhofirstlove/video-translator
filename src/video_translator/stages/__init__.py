@@ -29,7 +29,7 @@ ALL_STAGES: list[type[Stage]] = [
     RenderStage,
 ]
 
-# Version 1: Gemini + ElevenLabs only (no audio separation).
+# Version 1: Gemini + VieNeu-TTS only (no audio separation).
 V1_STAGES: list[type[Stage]] = [
     ExtractAudioStage,
     TranscribeStage,

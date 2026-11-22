@@ -25,7 +25,7 @@ def test_builtin_providers_registered():
     assert "demucs" in registry.available("separation")
     assert "gemini" in registry.available("asr")
     assert "gemini" in registry.available("translation")
-    assert "elevenlabs" in registry.available("tts")
+    assert "vieneu" in registry.available("tts")
 
 
 @pytest.mark.parametrize(
@@ -50,7 +50,7 @@ def test_importing_any_entry_point_registers_v1_providers(module):
         "from video_translator.providers import registry\n"
         "assert 'gemini' in registry.available('asr')\n"
         "assert 'gemini' in registry.available('translation')\n"
-        "assert 'elevenlabs' in registry.available('tts')\n"
+        "assert 'vieneu' in registry.available('tts')\n"
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

@@ -10,19 +10,22 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Query, Request, UploadFile
+from fastapi import FastAPI, File, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from video_translator.config import AppConfig, load_config
 from video_translator.models import Job
+from video_translator.synth_line import TTSFactory
+from video_translator.web import editor_api
 from video_translator.web.jobs import (
     InvalidEdit,
     JobError,
     JobManager,
     JobNotFound,
     PipelineFactory,
+    check_job_id,
 )
 
 WEB_DIR = Path(__file__).parent
@@ -82,24 +85,13 @@ def _artifact_path(manager: JobManager, job: Job, kind: str) -> Path | None:
     return None
 
 
-def _characters_used(config: AppConfig) -> int | None:
-    """ElevenLabs characters used this month (None if the counter cannot be read)."""
-    try:
-        from video_translator.usage import UsageTracker, default_usage_path
-
-        tracker = UsageTracker(
-            default_usage_path(config.paths.work), config.elevenlabs.monthly_character_budget
-        )
-        return tracker.used
-    except Exception:  # usage tracking is optional; never break the page because of it
-        return None
-
-
 def create_app(
-    config: AppConfig | None = None, pipeline_factory: PipelineFactory | None = None
+    config: AppConfig | None = None,
+    pipeline_factory: PipelineFactory | None = None,
+    tts_factory: TTSFactory | None = None,
 ) -> FastAPI:
     config = config if config is not None else load_config()
-    manager = JobManager(config, pipeline_factory)
+    manager = JobManager(config, pipeline_factory, tts_factory)
 
     app = FastAPI(title="video-translator")
     app.state.config = config
@@ -139,9 +131,21 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> Response:
+        return Response(status_code=204)  # no icon: keeps the browser console free of 404s
+
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         return (WEB_DIR / "templates" / "index.html").read_text(encoding="utf-8")
+
+    @app.get("/editor/{job_id}", response_class=HTMLResponse)
+    def editor_page(job_id: str) -> str:
+        check_job_id(job_id)
+        return editor_api.editor_page_html(WEB_DIR)
+
+    # Added as plain routes (not include_router) so ``app.routes`` lists every path.
+    app.router.routes.extend(editor_api.router.routes)
 
     # ----- jobs ----------------------------------------------------------------------------
 
@@ -225,12 +229,12 @@ def create_app(
             "gemini_model": config.gemini.model,
             "keys_set": {
                 "gemini": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
-                "elevenlabs": bool(os.environ.get("ELEVENLABS_API_KEY", "").strip()),
             },
-            "elevenlabs": {
-                "monthly_character_budget": config.elevenlabs.monthly_character_budget,
-                "characters_used_this_month": _characters_used(config),
+            "vieneu": {
+                "mode": config.vieneu.mode,
+                "voice": config.vieneu.voice,
             },
+            "budget": None,  # kept for compatibility: voice generation is free
         }
 
     return app

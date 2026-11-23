@@ -206,11 +206,21 @@ class VieNeuTTS(TTSProvider):
         """Names of the preset voices (library mode); empty in server mode."""
         return [label for label, _ in self._preset_pairs()]
 
-    def _check_voice(self, voice: str) -> None:
+    def list_voice_choices(self) -> list[tuple[str, str]]:
+        """``(label, voice_id)`` of the preset voices. The label is only for showing to people
+        (it may hold a star, the sex, the region...); the engine knows the voice by its id."""
+        return self._preset_pairs()
+
+    def _resolve_voice(self, voice: str) -> str:
+        """The id the engine wants for ``voice`` (an id or a label, as typed); an unknown name
+        raises ``TTSVoiceError``. Without a preset list (server mode) the name is passed on."""
         pairs = self._preset_pairs()
-        if not pairs or any(_matches(voice, label, vid) for label, vid in pairs):
-            return
-        names = ", ".join(label for label, _ in pairs[:6])
+        if not pairs:
+            return voice
+        for label, vid in pairs:
+            if _matches(voice, label, vid):
+                return vid
+        names = ", ".join(vid for _, vid in pairs[:6])
         raise TTSVoiceError(
             f"Unknown VieNeu voice {voice!r}. Some valid voices: {names}. "
             "List them all with: video-translator voices"
@@ -222,7 +232,7 @@ class VieNeuTTS(TTSProvider):
             raise TTSError("There is no text to speak.")
         voice = (voice or self.voice or "").strip() or self.config.voice
         transport = self._get_transport()
-        self._check_voice(voice)
+        voice = self._resolve_voice(voice)
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = out_path.with_name(f"{out_path.stem}.part{out_path.suffix}")

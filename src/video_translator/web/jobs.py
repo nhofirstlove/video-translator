@@ -120,6 +120,10 @@ class JobManager:
             return
         self.config = fresh.model_copy(update={"paths": self.config.paths})
 
+    def reload_settings(self) -> None:
+        """Re-read the settings files now (after the page saved a new default)."""
+        self._refresh_config()
+
     def __init__(
         self,
         config: AppConfig,
@@ -294,11 +298,16 @@ class JobManager:
                 candidate = f"{stem} ({counter}){suffix}"
 
     def create_job(
-        self, filename: str, fileobj: BinaryIO, separate_voice: bool | None = None
+        self,
+        filename: str,
+        fileobj: BinaryIO,
+        separate_voice: bool | None = None,
+        voice: str | None = None,
     ) -> Job:
         """Stream an uploaded video into the input folder and create a pending job for it.
 
         ``separate_voice`` None = the configured default (``separation.enabled``).
+        ``voice`` None or empty = the configured Vietnamese voice (``vieneu.voice``).
         """
         name = clean_upload_name(filename)
         path, out = self._unique_path(name)
@@ -317,6 +326,7 @@ class JobManager:
             job.separate_voice = (
                 self.config.separation.enabled if separate_voice is None else separate_voice
             )
+            job.voice = (voice or "").strip() or None
             job.save()
         except BaseException:
             path.unlink(missing_ok=True)

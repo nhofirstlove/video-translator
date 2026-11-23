@@ -8,6 +8,11 @@ JSON errors: `{"detail": "<plain-language message>"}` with a 4xx status. Nothing
 - `GET /editor/{id}` -> `web/templates/editor.html` (static HTML shell; JS reads the job id from `location.pathname`).
 - Scripts load in this order: `/static/editor.js` (U2) then `/static/editor_audio.js` (U3). Styles: `/static/editor.css` (U2 owns; U3 may add `/static/editor_audio.css`).
 
+## Upload page: voice picker (not part of the editor)
+- `GET /api/voices` -> `{"mode": "library"|"server", "default": "Trúc Ly", "sample_text": "...", "max_text_chars": 300, "voices": [{"id": "Ngọc Huyền", "label": "⭐ Ngọc Huyền — Nữ · Bắc · Giọng đọc tự nhiên"}, ...], "note": ""}`. The `label` is only shown to people; the page sends, saves and stores the `id` (the engine also accepts a label and turns it into the id). `voices` is empty (with a plain-language `note`) in server mode or when the voice package is missing; the page then lets the user type a name. Loading the list loads the voice model, so the page asks only when the user opens the picker.
+- `POST /api/voices/sample` body `{"voice": "Mai Anh" | null, "text": "..." | null}` -> a short `audio/wav` (no voice = `vieneu.voice`; no text = the standard sentence; at most 300 characters). Samples are cached on disk per voice and text (`<work>/_voice_samples/`). 400 for an unknown voice or too long text, 502 with a plain message when the voice engine is missing or fails.
+- `POST /api/jobs?voice=NAME&make_default=true`: `voice` is stored on the job (`job.voice`, returned as `"voice"`; without it the job uses `vieneu.voice`) and is used for every line, also by the editor's per-line **Regenerate**. `make_default=true` also saves it as `vieneu.voice` in `config/local.yaml`; the response then has `"default_voice_saved": true` (or `false` plus `"default_voice_error"`; the upload still succeeds).
+
 ## Data API
 - `GET /api/jobs/{id}/editor` ->
   ```json

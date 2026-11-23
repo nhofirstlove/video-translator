@@ -147,6 +147,8 @@ class FakeVieNeu:
         from video_translator.providers.tts.base import TTSError
 
         self.calls.append((text, voice))
+        if voice not in {vid for _, vid in self.list_voices()}:  # like the real engine
+            raise TTSError(f"Voice {voice!r} not found.")
         if self.fail_on is not None and self.fail_on in text:
             raise TTSError("the fake voice engine broke")
         seconds = max(0.3, len(text) * SECONDS_PER_CHAR)
@@ -162,7 +164,12 @@ class FakeVieNeu:
             w.writeframes(frames)
 
     def list_voices(self) -> list[tuple[str, str]]:
-        return [("Minh Quân", "minh-quan"), ("Mai Anh", "mai-anh"), ("Trúc Ly", "truc-ly")]
+        # (label shown to people, id the engine knows), like the real preset voices
+        return [
+            ("⭐ Minh Quân — Nam · Bắc", "Minh Quân"),
+            ("⭐ Mai Anh — Nữ · Bắc · Giọng đọc tự nhiên", "Mai Anh"),
+            ("Trúc Ly — Nữ · Nam", "Trúc Ly"),
+        ]
 
 
 class Fakes:

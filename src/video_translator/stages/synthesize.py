@@ -51,7 +51,7 @@ class SynthesizeStage(Stage):
             "Preparing the voice (the first time it downloads the model, which can take a "
             "few minutes)"
         )
-        voice = config.vieneu.voice
+        voice = job.voice or config.vieneu.voice  # the video's own choice wins
         for n, (index, seg) in enumerate(todo, start=1):
             out = tts_dir / f"seg_{index:05d}{ext}"
             try:

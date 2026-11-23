@@ -40,6 +40,32 @@
             <span class="muted small-text">(better timing and words when music is loud; needs
               <code>pip install demucs</code>; about as slow as the video is long)</span></span>
         </label>
+        <details id="voice-picker" class="voice-picker">
+          <summary>Vietnamese voice: <strong id="voice-current">default</strong>
+            <span class="muted small-text">(click to listen to the voices and choose another one)</span>
+          </summary>
+          <p id="voice-loading" class="muted small-text" hidden>Loading the voices. The first time
+            this loads the voice model, which can take a minute or more.</p>
+          <div id="voice-controls" hidden>
+            <div class="row">
+              <label for="voice-select" class="visually-hidden">Voice</label>
+              <select id="voice-select"></select>
+              <input type="text" id="voice-name" maxlength="80" placeholder="Voice name" hidden>
+              <button type="button" id="voice-play" class="btn small">Play sample</button>
+            </div>
+            <label for="voice-sample-text" class="small-text">Sample sentence (type your own to hear it)</label>
+            <textarea id="voice-sample-text" rows="2" maxlength="300"></textarea>
+            <label class="check" for="voice-default">
+              <input type="checkbox" id="voice-default">
+              <span>Make this my default voice
+                <span class="muted small-text">(saved in <code>config/local.yaml</code>; without
+                  this tick the voice is used for this video only)</span></span>
+            </label>
+          </div>
+          <audio id="voice-audio" controls hidden></audio>
+          <p id="voice-note" class="muted small-text"></p>
+          <p id="voice-error" class="error-text" role="alert"></p>
+        </details>
         <div class="row">
           <button type="submit" id="upload-btn" class="btn primary" disabled>Upload and translate</button>
         </div>

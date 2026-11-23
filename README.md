@@ -123,7 +123,7 @@ Example:
 
 ```yaml
 vieneu:
-  voice: "Mai Anh"            # list voices with: video-translator voices
+  voice: "Mai Anh"            # list voices with: video-translator voices (or pick on the upload page)
 whisper:
   model: small                # faster than the default "medium", a little less exact
 ninerouter:
@@ -302,7 +302,7 @@ những gì bạn muốn đổi. Công cụ đọc lại file này mỗi khi m�
 
 ```yaml
 vieneu:
-  voice: "Mai Anh"            # xem danh sách giọng: video-translator voices
+  voice: "Mai Anh"            # xem danh sách giọng: video-translator voices (hoặc chọn trên trang tải lên)
 whisper:
   model: small                # nhanh hơn "medium" mặc định, kém chính xác hơn một chút
 ninerouter:
@@ -310,6 +310,12 @@ ninerouter:
 separation:
   enabled: false              # true = tách giọng khỏi nhạc cho mọi video (Bước 9)
 ```
+
+Có thể chọn giọng ngay trên trang tải lên: mở mục **Vietnamese voice** phía trên nút tải lên (lần
+đầu mở sẽ tải danh sách giọng, có thể mất khoảng một phút), chọn một giọng rồi bấm **Play sample**
+để nghe câu mẫu, hoặc gõ câu của bạn vào ô trước khi nghe. Giọng được chọn chỉ dùng **cho video
+này**. Tick **Make this my default voice** để lưu luôn làm giọng mặc định (`vieneu.voice` trong
+`config/local.yaml`). Không hỗ trợ nhân bản giọng từ file ghi âm.
 
 ### Bước 9 (tùy chọn): Tách giọng khỏi nhạc khi nhạc quá to (Demucs)
 
@@ -631,6 +637,15 @@ Other `vieneu` settings: `mode` (`library` or `server`), `precision` (`fp32`, or
 is faster on CPU but needs a modern CPU with VNNI and can garble speech on older ones),
 `server_url` and `timeout_seconds`. You can change the voice at any time; lines already
 spoken keep their old voice, so change it before starting a job.
+
+**Or pick it on the upload page.** Open **Vietnamese voice** above the upload button. The first
+time it opens it loads the voice list (this loads the voice model, so it can take a minute). Choose
+a voice, press **Play sample** to hear it say the sample sentence, or type your own sentence in
+the box first. When you like one, upload the video: the voice is used **for this video only**.
+Tick **Make this my default voice** to also save it as `vieneu.voice` in `config/local.yaml`. Each
+sample is kept, so hearing the same voice and sentence again is instant. In server mode the voices
+cannot be listed: type a voice name instead. Cloning a voice from your own recording is not
+supported.
 
 ### 3. Run it: web page
 

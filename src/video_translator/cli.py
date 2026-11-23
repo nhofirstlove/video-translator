@@ -113,19 +113,20 @@ def voices_command(config_path: str | None = None) -> int:
                 "listed here. Set `vieneu.voice` in config/local.yaml (for example 'Mai Anh')."
             )
             return 0
-        names = provider.list_voices()
+        choose = getattr(provider, "list_voice_choices", None)
+        choices = choose() if choose else [(n, n) for n in provider.list_voices()]
     except ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
         return 1
     except TTSError as exc:
         print(f"Cannot list the voices: {exc}", file=sys.stderr)
         return 1
-    if not names:
+    if not choices:
         print("No preset voices were reported.")
         return 0
     print('Preset voices (set one with `vieneu: {voice: "NAME"}` in config/local.yaml):')
-    for name in names:
-        print(f"  {name}")
+    for label, voice_id in choices:
+        print(f"  {voice_id}" if label == voice_id else f"  {voice_id}   ({label})")
     return 0
 
 

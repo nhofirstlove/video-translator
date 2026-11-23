@@ -14,7 +14,7 @@ from fastapi import FastAPI, File, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from video_translator.config import AppConfig, load_config
+from video_translator.config import AppConfig, ConfigError, load_config, save_local_override
 from video_translator.models import Job
 from video_translator.synth_line import TTSFactory
 from video_translator.web import editor_api
@@ -27,6 +27,7 @@ from video_translator.web.jobs import (
     PipelineFactory,
     check_job_id,
 )
+from video_translator.web.voice_samples import VoiceSamples, clean_voice
 
 WEB_DIR = Path(__file__).parent
 
@@ -46,6 +47,11 @@ class EditsBody(BaseModel):
     """Either ``{"edits": [{"index": 0, "text_vi": "..."}]}`` or ``{"edits": {"0": "..."}}``."""
 
     edits: list[EditItem] | dict[str, str]
+
+
+class SampleBody(BaseModel):
+    voice: str | None = None  # None = the configured voice
+    text: str | None = None  # None or empty = the standard sample sentence
 
 
 def _parse_edits(body: EditsBody) -> dict[int, str]:
@@ -131,6 +137,7 @@ def create_app(
             "segments": len(job.segments),
             "review_approved": job.review_approved,
             "separate_voice": job.separate_voice,
+            "voice": job.voice or manager.config.vieneu.voice,
             "downloads": {
                 kind: _artifact_path(manager, job, kind) is not None for kind in DOWNLOADS
             },
@@ -165,11 +172,23 @@ def create_app(
         file: UploadFile = File(...),
         start: bool = Query(True),
         separate_voice: bool | None = Query(None),
+        voice: str | None = Query(None),
+        make_default: bool = Query(False),
     ) -> dict[str, Any]:
-        job = manager.create_job(file.filename or "", file.file, separate_voice)
+        voice = clean_voice(voice) or None
+        job = manager.create_job(file.filename or "", file.file, separate_voice, voice)
+        extra: dict[str, Any] = {}
+        if voice and make_default:
+            try:
+                save_local_override("vieneu", {"voice": voice})
+                manager.reload_settings()
+                extra["default_voice_saved"] = True
+            except ConfigError as exc:  # the upload still works; say why it was not saved
+                extra["default_voice_saved"] = False
+                extra["default_voice_error"] = str(exc)
         if start:
             manager.start(job.id)
-        return job_json(manager.get(job.id))
+        return {**job_json(manager.get(job.id)), **extra}
 
     @app.get("/api/jobs")
     def list_jobs() -> list[dict[str, Any]]:
@@ -222,6 +241,19 @@ def create_app(
         suffix = path.suffix or f".{DOWNLOADS[kind][1]}"
         return FileResponse(path, filename=f"{stem}_vi{suffix}")
 
+    # ----- voice picker (upload page) ------------------------------------------------------
+
+    samples = VoiceSamples(manager)
+
+    @app.get("/api/voices")
+    def list_voices() -> dict[str, Any]:
+        return samples.listing()
+
+    @app.post("/api/voices/sample")
+    def voice_sample(body: SampleBody) -> FileResponse:
+        path = samples.sample(body.voice, body.text)
+        return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
     # ----- setup and settings --------------------------------------------------------------
 
     @app.get("/api/doctor")
@@ -246,8 +278,8 @@ def create_app(
                 "gemini": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
             },
             "vieneu": {
-                "mode": config.vieneu.mode,
-                "voice": config.vieneu.voice,
+                "mode": manager.config.vieneu.mode,
+                "voice": manager.config.vieneu.voice,
             },
             "budget": None,  # kept for compatibility: voice generation is free
         }

@@ -177,6 +177,115 @@
     });
   }
 
+  // ---------- voice picker ----------
+  var voiceState = { loaded: false, loading: false, audioUrl: null };
+
+  // The voice to use, or "" when the picker was never opened (the configured default is used).
+  function chosenVoice() {
+    if (!voiceState.loaded) return "";
+    var select = $("voice-select");
+    var value = select.hidden ? $("voice-name").value : select.value;
+    return (value || "").trim();
+  }
+
+  function sameVoice(want, label) {
+    want = (want || "").trim().toLowerCase();
+    label = (label || "").trim().toLowerCase();
+    return want !== "" && (label === want || label.indexOf(want + " (") === 0);
+  }
+
+  function showVoices(data) {
+    var select = $("voice-select");
+    var list = data.voices || [];
+    var fallback = data.default || "";
+    select.textContent = "";
+    if (list.length) {
+      var picked = false;
+      list.forEach(function (voice) {
+        // the label is only shown; the id is what is sent to be spoken, saved and kept
+        var option = el("option", { value: voice.id, text: voice.label });
+        if (!picked && (sameVoice(fallback, voice.id) || sameVoice(fallback, voice.label))) {
+          option.selected = true;
+          picked = true;
+        }
+        select.appendChild(option);
+      });
+      select.hidden = false;
+      $("voice-name").hidden = true;
+    } else {
+      select.hidden = true;
+      $("voice-name").hidden = false;
+      $("voice-name").value = fallback;
+    }
+    $("voice-sample-text").value = data.sample_text || "";
+    $("voice-sample-text").maxLength = data.max_text_chars || 300;
+    $("voice-note").textContent = data.note || "";
+    $("voice-controls").hidden = false;
+    voiceState.loaded = true;
+    updateVoiceCurrent();
+  }
+
+  function updateVoiceCurrent() {
+    var name = chosenVoice();
+    $("voice-current").textContent = name || "default";
+  }
+
+  function loadVoices() {
+    if (voiceState.loaded || voiceState.loading) return;
+    voiceState.loading = true;
+    $("voice-loading").hidden = false;
+    $("voice-error").textContent = "";
+    api("/api/voices").then(showVoices).catch(function (err) {
+      $("voice-error").textContent = "Could not load the voices: " + err.message +
+        " Close and open this box to try again.";
+    }).then(function () {
+      voiceState.loading = false;
+      $("voice-loading").hidden = true;
+    });
+  }
+
+  function playSample() {
+    var button = $("voice-play");
+    var voice = chosenVoice();
+    $("voice-error").textContent = "";
+    button.disabled = true;
+    button.textContent = "Making the sample...";
+    fetch("/api/voices/sample", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voice: voice || null, text: $("voice-sample-text").value })
+    }).then(function (res) {
+      if (res.ok) return res.blob();
+      return res.text().then(function (text) {
+        var data = null;
+        try { data = JSON.parse(text); } catch (e) { data = null; }
+        throw new Error(errorText(data, res.status));
+      });
+    }).then(function (blob) {
+      if (voiceState.audioUrl) URL.revokeObjectURL(voiceState.audioUrl);
+      voiceState.audioUrl = URL.createObjectURL(blob);
+      var audio = $("voice-audio");
+      audio.src = voiceState.audioUrl;
+      audio.hidden = false; // a small player to replay or stop the sample
+      return audio.play();
+    }).catch(function (err) {
+      $("voice-error").textContent = err.message;
+    }).then(function () {
+      button.disabled = false;
+      button.textContent = "Play sample";
+    });
+  }
+
+  function setupVoicePicker() {
+    if (!$("voice-picker")) return;
+    $("voice-picker").addEventListener("toggle", function () {
+      if (this.open) loadVoices();
+    });
+    $("voice-play").addEventListener("click", playSample);
+    $("voice-select").addEventListener("change", updateVoiceCurrent);
+    $("voice-name").addEventListener("input", updateVoiceCurrent);
+  }
+
   function upload(file) {
     var form = new FormData();
     form.append("file", file);
@@ -205,7 +314,14 @@
         wrap.hidden = true;
         $("file-input").value = "";
         setFile(null);
-        toast("Upload finished. Translation started.");
+        var note = "Upload finished. Translation started.";
+        if (data && data.default_voice_saved) {
+          note += " Saved " + data.voice + " as your default voice.";
+          $("voice-default").checked = false;
+        } else if (data && data.default_voice_error) {
+          note += " The default voice was not saved: " + data.default_voice_error;
+        }
+        toast(note);
         refreshJobs();
       } else {
         $("upload-error").textContent = errorText(data, xhr.status);
@@ -218,7 +334,13 @@
       $("upload-btn").disabled = !chosenFile;
       wrap.hidden = true;
     });
-    xhr.open("POST", "/api/jobs?start=true&separate_voice=" + (separate ? "true" : "false"));
+    var url = "/api/jobs?start=true&separate_voice=" + (separate ? "true" : "false");
+    var voice = chosenVoice();
+    if (voice) {
+      url += "&voice=" + encodeURIComponent(voice);
+      if ($("voice-default").checked) url += "&make_default=true";
+    }
+    xhr.open("POST", url);
     xhr.send(form);
   }
 
@@ -526,6 +648,7 @@
   document.addEventListener("DOMContentLoaded", function () {
     $("setup-refresh").addEventListener("click", loadSetup);
     setupUpload();
+    setupVoicePicker();
     loadSetup();
     refreshJobs();
   });

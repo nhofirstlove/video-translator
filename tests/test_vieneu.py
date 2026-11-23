@@ -52,14 +52,31 @@ def test_synthesize_writes_file_and_uses_config_voice(tmp_path):
     tts = make()
     out = tts.synthesize("Xin chào", tmp_path / "sub" / "a.wav")
     assert out == tmp_path / "sub" / "a.wav" and out.read_bytes() == WAV
-    assert tts._transport.calls == [("Xin chào", "Trúc Ly")]
+    assert tts._transport.calls == [("Xin chào", "id-3")]  # the engine gets the id, not the label
     assert not list((tmp_path / "sub").glob("*.part*"))
 
 
 def test_voice_parameter_overrides_config_and_matching_is_case_insensitive(tmp_path):
     tts = make()
     tts.synthesize("a", tmp_path / "a.wav", voice="mai anh")
-    assert tts._transport.calls == [("a", "mai anh")]
+    assert tts._transport.calls == [("a", "id-2")]
+
+
+def test_a_display_label_is_turned_into_the_voice_id_before_speaking(tmp_path):
+    transport = FakeTransport(
+        presets=[
+            ("⭐ Ngọc Huyền — Nữ · Bắc · Giọng đọc tự nhiên", "Ngọc Huyền"),
+            ("Mai Anh", "Mai Anh"),
+        ]
+    )
+    tts = make(transport=transport)
+    tts.synthesize("a", tmp_path / "a.wav", voice="⭐ Ngọc Huyền — Nữ · Bắc · Giọng đọc tự nhiên")
+    tts.synthesize("b", tmp_path / "b.wav", voice="ngọc huyền")
+    assert transport.calls == [("a", "Ngọc Huyền"), ("b", "Ngọc Huyền")]
+    assert tts.list_voice_choices()[0] == (
+        "⭐ Ngọc Huyền — Nữ · Bắc · Giọng đọc tự nhiên",
+        "Ngọc Huyền",
+    )
 
 
 def test_empty_text_is_an_error(tmp_path):
@@ -68,7 +85,7 @@ def test_empty_text_is_an_error(tmp_path):
 
 
 def test_unknown_voice_lists_valid_presets(tmp_path):
-    with pytest.raises(TTSVoiceError, match="Minh Quân, Mai Anh"):
+    with pytest.raises(TTSVoiceError, match="id-1, id-2"):
         make().synthesize("a", tmp_path / "a.wav", voice="Nobody")
 
 

@@ -85,6 +85,8 @@ class Job(BaseModel):
     # Switched on per video: Demucs splits the voice from the music first, and the voice alone is
     # used for the timing and the transcription (the final mix still uses the original sound).
     separate_voice: bool = False
+    # The Vietnamese voice chosen for this video on the upload page (None = ``vieneu.voice``).
+    voice: str | None = None
 
     @classmethod
     def create(cls, input_path: str | Path, work_root: str | Path) -> Job:

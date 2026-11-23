@@ -167,3 +167,16 @@ textarea.vi {
 
 .check { display: flex; gap: 0.6rem; align-items: flex-start; margin: 0.75rem 0; cursor: pointer; }
 .check input { margin-top: 0.25rem; }
+
+/* voice picker (upload page) */
+.voice-picker { margin: 0.75rem 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+.voice-picker summary { cursor: pointer; }
+.voice-picker .row { margin: 10px 0 6px; }
+.voice-picker select, .voice-picker input[type="text"] {
+  min-width: 14rem; font: inherit; padding: 5px 8px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg); color: var(--text);
+}
+.voice-picker textarea {
+  width: 100%; resize: vertical; font: inherit; padding: 6px 8px; margin-top: 4px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text);
+}

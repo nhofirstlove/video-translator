@@ -48,7 +48,7 @@ def synthesize_line(
     tts_dir = job.work_dir / "tts"
     tts_dir.mkdir(parents=True, exist_ok=True)
     out = tts_dir / f"seg_{index:05d}{ext}"
-    provider.synthesize(text, out)
+    provider.synthesize(text, out, job.voice)  # None = the configured voice
     seg.audio_path = out
     seg.audio_stale = False
     fit_segment(job, index)

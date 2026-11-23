@@ -2,10 +2,11 @@
 
 A locally run Python tool that takes a Chinese video (30 to 60 minutes is the target) and
 produces a Vietnamese version: a Vietnamese dubbed voice plus a Vietnamese `.srt` subtitle
-file. Version 1 uses **Gemini** (transcription and translation, free tier) and
+file. It uses **Whisper** (runs on your computer) to hear the Chinese, **9Router** (a free local
+proxy to free AI models) to translate, with **Gemini** (free tier) as an automatic fallback, and
 **VieNeu-TTS** (Vietnamese voice: free, open source, runs on your own computer, no account and
-no limits). It runs on Windows, CPU only, and is controlled from a small local web page or
-from the command line.
+no limits). Nothing here needs a paid plan. It runs on Windows, CPU only, and is controlled from
+a small local web page or from the command line.
 
 ## How it works
 
@@ -13,13 +14,15 @@ from the command line.
    chunks (default 5 minutes).
 2. **Transcribe**: a speech detector listens to the audio and finds each *stretch of speech*;
    every pause of 0.4 seconds or more starts a new line, and the line's start and end are the
-   stretch's own start and end. A local speech model (faster-whisper) supplies the words of each
-   stretch, and Gemini corrects the Chinese. So the timing comes from the sound, the words from
-   Whisper and Gemini, and subtitles line up with the speech. Extra care: a **beep tone** (a
-   bleeped swear word) is detected in the audio and gets its own line, and Gemini writes the
-   censored word, which is then translated and spoken; filler sounds ("hmm", 嗯, 啊, laughter)
-   never become lines; Gemini adds a line it hears that the detector missed.
-3. **Translate**: Gemini translates the segments into spoken Vietnamese, in batches.
+   stretch's own start and end. A local speech model (faster-whisper) supplies both the timing
+   and the Chinese words, so subtitles line up with the speech. Extra care: a **beep tone** (a
+   bleeped swear word) is detected in the audio and gets its own line; if Whisper caught part of
+   the word it is kept, otherwise the line is marked （哔） and the translator guesses the word
+   from the context (check these in the review step); filler sounds ("hmm", 嗯, 啊, laughter)
+   and Whisper's known inventions (for example 请不吝点赞) never become lines.
+3. **Translate**: **9Router** translates the segments into spoken Vietnamese, in batches. It
+   tries your free models in the order you set; only when every free model has failed or is out
+   of quota does **Gemini** take over, automatically, for that batch.
 4. **Review**: the tool stops and writes a text file with the Vietnamese lines so you can fix
    mistakes. It continues only after you approve.
 5. **Subtitles**: a Vietnamese `.srt` is written.
@@ -68,8 +71,48 @@ Two more settings control the line timing: `whisper.pause_seconds` (default 0.4:
 long starts a new line) and `whisper.vad_threshold` (default 0.3: lower hears quieter speech,
 higher ignores more background noise).
 
-To go back to Gemini-only timing (faster, but subtitles may drift by seconds), set
-`providers: {asr: gemini}`.
+Whisper does the listening by itself. Compared with letting Gemini also listen, expect more
+mistakes on mumbled or noisy speech, and quiet speech under loud music may be missed. To go back
+to the old way (Gemini corrects Whisper's words and adds missed lines), set
+`providers: {asr: whisper_gemini}`.
+
+### Translation: 9Router with Gemini as the fallback
+
+9Router is a free program that runs on your computer and gives one address for many free AI
+models. Install [Node.js](https://nodejs.org), then in a second terminal:
+
+```bash
+npm install -g 9router
+9router
+```
+
+1. Open the dashboard at `http://localhost:20128`.
+2. Under **Providers**, connect the free ones you want (for example Kiro and OpenCode Free).
+3. Under **Combos**, create a combo named `free-combo` that lists those free models in the
+   order you prefer. (You can also type model names directly in `ninerouter.models`.)
+
+Keep 9Router running while a job translates. The settings, in `config/local.yaml` if you want to
+change them:
+
+```yaml
+ninerouter:
+  base_url: http://localhost:20128/v1
+  models: [free-combo]        # tried in order; the next one is tried when one fails
+  requests_per_minute: 20
+  batch_size: 20
+```
+
+If your 9Router asks for a key, put it in `.env` as `NINEROUTER_API_KEY` (normally not needed).
+A model that fails is rested for a while (15 minutes for a quota error, a day if it is refused
+or does not exist, 2 minutes for a bad answer) and the next model is used. When every model is
+resting or failing, Gemini translates that batch (it needs `GEMINI_API_KEY`, free tier). The
+job message shows how many lines each model translated. To use Gemini only, set
+`providers: {translation: gemini}`.
+
+Free providers can see the transcript text, and they have monthly limits; a long video can use
+up a free model, which is what the fallback is for. The Vietnamese may read less naturally than
+Gemini's, so use the review step. The `python -m video_translator doctor` check tells you whether
+9Router answers.
 
 ### Install the voice (VieNeu-TTS)
 
@@ -287,10 +330,11 @@ the active line to the current video time.
   line, so a 30 to 60 minute video can take a long time to voice. **Try a short clip first.**
   If a line fails, the job stops with a message naming the line (finished clips are kept);
   fix the cause and resume.
-- **Gemini** free tier: strict per-minute and per-day request limits. Long videos are slow
-  (the tool waits to stay under `gemini.requests_per_minute`) and may hit the daily quota.
-  Then the job pauses (status "paused"); run `resume` the next day and it continues from the
-  last finished chunk or batch.
+- **9Router free models** have monthly limits and the tool waits to stay under
+  `ninerouter.requests_per_minute`. When they run out, Gemini translates instead.
+- **Gemini** free tier (the fallback): strict per-minute and per-day request limits. If it hits
+  the daily quota too, the job pauses (status "paused"); run `resume` the next day and it
+  continues from the last finished batch.
 
 ### What version 1 does not do
 
@@ -302,7 +346,8 @@ the active line to the current video time.
   (`subtitles.burn_in` is ignored with a warning); turn the blur box on in the editor to burn
   the Vietnamese subtitles into the video.
 - One speaker/voice for the whole video; no per-speaker voices or voice cloning.
-- Gemini is still a cloud service; the voice is local (CPU), with no GPU tuning.
+- Translation uses cloud models (free ones through 9Router, then Gemini); the voice and the
+  listening are local (CPU), with no GPU tuning.
 
 ### Troubleshooting transcription
 
@@ -312,12 +357,14 @@ the active line to the current video time.
   to the internet once and try again (or choose a smaller `whisper.model`).
 - **Old videos still have shifted subtitles**: transcripts made before this change are not
   reused; upload the video again to get a new job.
-- **A bleeped word is missing or wrong**: the censored word is a guess by Gemini from what it
-  can hear under the beep; fix it in the review step or the editor. To turn the beep handling
-  off, use `whisper: {detect_beeps: false}`.
+- **A bleeped word is missing or wrong**: Whisper cannot hear under the beep, so the translator
+  guesses the word from the context (the line was marked （哔）). Fix it in the review step or
+  the editor. To turn the beep handling off, use `whisper: {detect_beeps: false}`.
 - **A real line is still missing** (quiet speech under loud music): lower
-  `whisper: {vad_threshold: 0.2}`; lines Gemini hears in a gap are added automatically, and the
-  job message tells how many. Separating the voice from the music is not built in yet.
+  `whisper: {vad_threshold: 0.2}`; or use `providers: {asr: whisper_gemini}` so Gemini adds lines
+  it hears in a gap. Separating the voice from the music is not built in yet.
+- **"No free model in 9Router could translate this batch"**: 9Router is not running, or no free
+  model is connected. Start `9router`, check the dashboard, and run the doctor command.
 - **Lines are cut too often or too rarely**: change `whisper: {pause_seconds: 0.6}` (longer
   pause needed) or `0.3` (shorter pause is enough).
 - **The beep is still audible in the dub**: the original bleep tone is silenced in the final

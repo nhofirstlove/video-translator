@@ -12,7 +12,11 @@ def _no_env_override(monkeypatch):
 
 def test_default_load():
     cfg = load_config()
-    assert cfg.providers.asr == "whisper_gemini" and cfg.providers.tts == "vieneu"
+    assert cfg.providers.asr == "whisper" and cfg.providers.tts == "vieneu"
+    assert cfg.providers.translation == "ninerouter"
+    assert cfg.ninerouter.base_url == "http://localhost:20128/v1" and cfg.ninerouter.models == [
+        "free-combo"
+    ]
     assert cfg.gemini.model == "gemini-3.6-flash"
     assert cfg.vieneu.mode == "library" and cfg.vieneu.voice == "Trúc Ly"
     assert cfg.chunk_minutes == 5 and cfg.review is True

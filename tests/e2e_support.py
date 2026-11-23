@@ -175,6 +175,7 @@ def make_config(tmp_path: Path, **overrides) -> AppConfig:
     """Config for tests: private folders, tiny chunks, fast rate limit, a voice name."""
     config = AppConfig()
     config.providers.asr = "gemini"  # the old Gemini-only path: no Whisper model in these tests
+    config.providers.translation = "gemini"  # the tests fake Gemini, not 9Router
     config.paths.input = tmp_path / "data" / "input"
     config.paths.work = tmp_path / "data" / "work"
     config.paths.output = tmp_path / "data" / "output"

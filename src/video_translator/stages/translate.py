@@ -19,6 +19,7 @@ from video_translator.models import Job, JobStatus, Segment
 from video_translator.providers import registry
 from video_translator.providers.gemini_client import QuotaExhaustedError
 from video_translator.providers.translation import gemini as _gemini  # noqa: F401 (registers)
+from video_translator.providers.translation import ninerouter as _ninerouter  # noqa: F401
 from video_translator.providers.translation.base import TranslationProvider
 from video_translator.stages.base import PauseRequested, Stage
 
@@ -121,6 +122,9 @@ class TranslateStage(Stage):
                 job.segments[idx].text_vi = vi
             job.message = f"Translating {done_count()}/{total}"
             job.save()
+        notes = [n for n in getattr(provider, "notes", []) if n]
+        if notes:
+            job.message = f"Translated {done_count()}/{total} segments ({'; '.join(notes)})"
         return job
 
     @staticmethod

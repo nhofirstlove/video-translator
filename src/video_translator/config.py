@@ -24,14 +24,27 @@ class _Model(BaseModel):
 
 
 class ProvidersConfig(_Model):
-    asr: Literal["whisper_gemini", "gemini"] = "whisper_gemini"
-    translation: Literal["gemini"] = "gemini"
+    # whisper = Whisper alone (local, free); whisper_gemini = Whisper times, Gemini writes the words
+    asr: Literal["whisper", "whisper_gemini", "gemini"] = "whisper"
+    # ninerouter = the free models in 9Router first, Gemini only when all of them failed
+    translation: Literal["ninerouter", "gemini"] = "ninerouter"
     tts: Literal["vieneu"] = "vieneu"
 
 
 class GeminiConfig(_Model):
     model: str = "gemini-3.6-flash"
     requests_per_minute: int = Field(10, gt=0)
+
+
+class NineRouterConfig(_Model):
+    """9Router: a program on this computer that fronts many AI services (free ones included)."""
+
+    base_url: str = "http://localhost:20128/v1"
+    api_key_env: str = "NINEROUTER_API_KEY"  # optional: 9Router accepts any key unless it asks
+    models: list[str] = Field(default_factory=lambda: ["free-combo"])  # tried in this order
+    requests_per_minute: int = Field(20, gt=0)
+    timeout_seconds: float = Field(120.0, gt=0)
+    batch_size: int = Field(20, gt=0, le=100)  # lines per request; free models like small ones
 
 
 class WhisperConfig(_Model):
@@ -98,6 +111,7 @@ class AppConfig(_Model):
     device: Literal["auto", "cuda", "cpu"] = "auto"
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
+    ninerouter: NineRouterConfig = Field(default_factory=NineRouterConfig)
     whisper: WhisperConfig = Field(default_factory=WhisperConfig)
     vieneu: VieNeuConfig = Field(default_factory=VieNeuConfig)
     chunk_minutes: int = Field(5, gt=0)

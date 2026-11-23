@@ -20,6 +20,7 @@ from video_translator.models import Chunk, Job, JobStatus, Segment
 from video_translator.providers import registry
 from video_translator.providers.asr import gemini as _gemini  # noqa: F401  (registers "gemini")
 from video_translator.providers.asr import whisper_gemini as _wg  # noqa: F401  (registers it)
+from video_translator.providers.asr import whisper_only as _wo  # noqa: F401  (registers "whisper")
 from video_translator.providers.asr.base import ASRProvider
 from video_translator.providers.asr.whisper_timing import WhisperError
 from video_translator.providers.gemini_client import QuotaExhaustedError

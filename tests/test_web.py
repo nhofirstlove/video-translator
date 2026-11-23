@@ -332,7 +332,7 @@ def test_config_summary_has_no_secrets(client, monkeypatch):
     body = res.json()
     assert body["review"] is True
     assert body["chunk_minutes"] == 5
-    assert body["providers"] == {"asr": "whisper_gemini", "translation": "gemini", "tts": "vieneu"}
+    assert body["providers"] == {"asr": "whisper", "translation": "ninerouter", "tts": "vieneu"}
     assert body["vieneu"] == {"mode": "library", "voice": "Trúc Ly"}
     assert body["keys_set"] == {"gemini": True}
     assert body["budget"] is None

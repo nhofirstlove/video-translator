@@ -237,10 +237,12 @@ def apply_beeps(lines: list[TimedLine], beeps: list[tuple[float, float]]) -> lis
         bs, be = max(0.0, beep_start - BEEP_PAD), beep_end + BEEP_PAD
         cs, ce = bs, be
         kept: list[TimedLine] = []
+        heard: list[Word] = []  # words Whisper still caught under the beep
         for line in result:
             if line.end <= bs or line.start >= be:
                 kept.append(line)
                 continue
+            heard += [w for w in line.words if bs <= (w.start + w.end) / 2 < be]
             if bs - line.start >= MIN_SIDE_SECONDS:
                 kept.append(_piece(line, line.start, bs))
             else:
@@ -249,7 +251,7 @@ def apply_beeps(lines: list[TimedLine], beeps: list[tuple[float, float]]) -> lis
                 kept.append(_piece(line, be, line.end))
             else:
                 ce = max(ce, line.end)
-        kept.append(TimedLine(cs, ce, "", censored=True, force=True))
+        kept.append(TimedLine(cs, ce, "", heard, censored=True, force=True))
         result = sorted(kept, key=lambda x: (x.start, x.end))
     return result
 

@@ -20,7 +20,8 @@ MIN_RAM_GB = 4.0
 
 FFMPEG_HINT = "on Windows run `winget install Gyan.FFmpeg`, then reopen the terminal"
 KEY_HELP = {
-    "GEMINI_API_KEY": "get one in Google AI Studio (https://aistudio.google.com/apikey)",
+    "GEMINI_API_KEY": "get one in Google AI Studio (https://aistudio.google.com/apikey); it is "
+    "the fallback when the free 9Router models fail",
 }
 
 
@@ -163,7 +164,7 @@ def check_whisper(
     importer: Callable[[str], object] = importlib.import_module,
 ) -> CheckResult:
     """The local speech-timing package (faster-whisper) imports, when it is in use."""
-    if asr != "whisper_gemini":
+    if asr not in ("whisper", "whisper_gemini"):
         return CheckResult("whisper", OK, f"not used (providers.asr is {asr})")
     try:
         importer("faster_whisper")
@@ -181,6 +182,35 @@ def check_whisper(
     )
 
 
+def check_ninerouter(
+    translation: str = "ninerouter",
+    base_url: str = "http://localhost:20128/v1",
+    models: tuple[str, ...] = ("free-combo",),
+    opener: Callable[..., object] | None = None,
+) -> CheckResult:
+    """9Router answers at its address (only when translation uses it)."""
+    if translation != "ninerouter":
+        return CheckResult("9Router", OK, f"not used (providers.translation is {translation})")
+    import urllib.request
+
+    url = base_url.rstrip("/") + "/models"
+    try:
+        response = (opener or urllib.request.urlopen)(url, timeout=3)
+        close = getattr(response, "close", None)
+        if close:
+            close()
+    except Exception:  # not running, wrong address, refused
+        return CheckResult(
+            "9Router",
+            WARN,
+            f"cannot reach 9Router at {base_url}; start it with `9router` (then Gemini would "
+            "translate everything, if it has a key)",
+        )
+    return CheckResult(
+        "9Router", OK, f"reachable at {base_url}; models tried in order: {', '.join(models)}"
+    )
+
+
 def check_config() -> CheckResult:
     from video_translator.config import ConfigError, load_config
 
@@ -195,7 +225,8 @@ def run_checks() -> list[CheckResult]:
     config_result = check_config()
     device_pref = "auto"
     mode, server_url = "library", "http://localhost:8000"
-    asr, whisper_model = "whisper_gemini", "medium"
+    asr, whisper_model = "whisper", "medium"
+    translation, nr_url, nr_models = "ninerouter", "http://localhost:20128/v1", ("free-combo",)
     if config_result.status == OK:
         from video_translator.config import load_config
 
@@ -203,6 +234,8 @@ def run_checks() -> list[CheckResult]:
         device_pref = cfg.device
         mode, server_url = cfg.vieneu.mode, cfg.vieneu.server_url
         asr, whisper_model = cfg.providers.asr, cfg.whisper.model
+        translation = cfg.providers.translation
+        nr_url, nr_models = cfg.ninerouter.base_url, tuple(cfg.ninerouter.models)
     return [
         check_python(),
         check_tool("ffmpeg"),
@@ -210,6 +243,7 @@ def run_checks() -> list[CheckResult]:
         check_hardware(),
         check_device(device_pref),
         check_key("GEMINI_API_KEY"),
+        check_ninerouter(translation, nr_url, nr_models),
         check_whisper(asr, whisper_model),
         check_vieneu(mode, server_url),
         config_result,

@@ -6,10 +6,20 @@
 device: auto
 
 providers:
-  asr: whisper_gemini         # whisper_gemini = Whisper times each line, Gemini writes the words
+  asr: whisper                # whisper = Whisper alone: local and free, no key needed
+                              # whisper_gemini = Whisper times each line, Gemini writes the words
                               # gemini = Gemini only (faster, but timing can drift by seconds)
-  translation: gemini
+  translation: ninerouter     # ninerouter = the free models in 9Router first, Gemini only when
+                              #   all of them failed; gemini = Gemini only
   tts: vieneu
+
+ninerouter:                   # the 9Router program on this computer (see the README)
+  base_url: http://localhost:20128/v1
+  api_key_env: NINEROUTER_API_KEY   # optional; 9Router accepts any key unless it asks for one
+  models: [free-combo]        # model or combo names from the 9Router dashboard, tried in order
+  requests_per_minute: 20
+  timeout_seconds: 120
+  batch_size: 20              # lines per request (free models answer small requests better)
 
 gemini:
   model: "gemini-3.6-flash"   # Gemini 3.6 Flash (API model code); change here to use another model

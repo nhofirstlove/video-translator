@@ -114,5 +114,5 @@ def test_main_output_and_exit_code(monkeypatch, capsys):
     assert code == 1
     assert SECRET not in out
     lines = [ln for ln in out.splitlines() if ln.startswith("[")]
-    assert len(lines) == 9
+    assert len(lines) == 10
     assert any(ln.startswith("[FAIL] ffmpeg") for ln in lines)

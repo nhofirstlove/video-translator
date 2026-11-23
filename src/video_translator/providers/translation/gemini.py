@@ -34,6 +34,9 @@ Rules:
   Vietnamese text, about {rate} characters per second). When the slot is short, be concise.
 - "context" (if present) holds the previous segments with their Vietnamese translation. It is
   read-only: use it for consistency, do NOT translate or return it.
+- A segment whose "zh" is （哔） is a word that was bleeped out in the original and could not be
+  heard. Replace it with the word that most likely was there, judging from the sentence around it
+  (a natural Vietnamese word of the same register, mild if unsure). Never write "bleep".
 
 Input JSON:
 {payload}

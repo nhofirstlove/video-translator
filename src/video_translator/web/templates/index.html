@@ -34,6 +34,12 @@
           <span class="muted small-text">mp4, mkv, mov, avi, webm, flv, m4v, ts. Long videos can take a few minutes to upload.</span>
           <span id="file-name" class="file-name"></span>
         </label>
+        <label class="check" for="separate-voice">
+          <input type="checkbox" id="separate-voice">
+          <span>Separate the voice from the music first
+            <span class="muted small-text">(better timing and words when music is loud; needs
+              <code>pip install demucs</code>; about as slow as the video is long)</span></span>
+        </label>
         <div class="row">
           <button type="submit" id="upload-btn" class="btn primary" disabled>Upload and translate</button>
         </div>

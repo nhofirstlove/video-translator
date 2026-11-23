@@ -125,6 +125,8 @@
       $("setup-summary").textContent = "Could not run the setup check: " + err.message;
     });
     api("/api/config/summary").then(function (cfg) {
+      var sep = $("separate-voice");
+      if (sep && !sep.dataset.touched) sep.checked = !!cfg.separate_voice;
       var parts = [];
       parts.push("Review before dubbing: " + (cfg.review ? "on" : "off"));
       parts.push("Chunks: " + cfg.chunk_minutes + " min");
@@ -169,6 +171,12 @@
     });
   }
 
+  if ($("separate-voice")) {
+    $("separate-voice").addEventListener("change", function () {
+      this.dataset.touched = "1";
+    });
+  }
+
   function upload(file) {
     var form = new FormData();
     form.append("file", file);
@@ -182,6 +190,7 @@
     bar.style.width = "0%";
     $("upload-pct").textContent = "Uploading 0%";
 
+    var separate = $("separate-voice") && $("separate-voice").checked;
     xhr.upload.addEventListener("progress", function (e) {
       if (!e.lengthComputable) return;
       var pct = Math.round((e.loaded / e.total) * 100);
@@ -209,7 +218,7 @@
       $("upload-btn").disabled = !chosenFile;
       wrap.hidden = true;
     });
-    xhr.open("POST", "/api/jobs?start=true");
+    xhr.open("POST", "/api/jobs?start=true&separate_voice=" + (separate ? "true" : "false"));
     xhr.send(form);
   }
 

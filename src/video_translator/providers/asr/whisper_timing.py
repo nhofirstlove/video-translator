@@ -177,7 +177,10 @@ BEEP_MIN_SECONDS = 0.35
 BEEP_TONALITY = 0.85  # share of a 0.2 s window's energy that sits in one narrow frequency peak
 BEEP_PAD = 0.05
 MIN_SIDE_SECONDS = 0.3  # a piece of a line left next to a beep must be at least this long
-PAUSE_SPLIT_SECONDS = 0.8  # a silence this long inside one Whisper line means two sentences
+PAUSE_SPLIT_SECONDS = 0.4  # a silence this long inside one Whisper line means two sentences
+_SENTENCE_END = "。！？!?…"
+_CLOSERS = "”’」』）)\"' "
+MIN_SENTENCE_SECONDS = 0.3  # never cut off a sentence piece shorter than this
 
 
 def detect_beeps(samples: Any, rate: int = 16000) -> list[tuple[float, float]]:
@@ -265,6 +268,35 @@ def split_at_pauses(line: TimedLine, gap: float = PAUSE_SPLIT_SECONDS) -> list[T
         if cur.start - prev.end >= gap:
             groups.append([])
         groups[-1].append(cur)
+    if len(groups) == 1:
+        return [line]
+    return [TimedLine(g[0].start, g[-1].end, "".join(w.text for w in g).strip(), g) for g in groups]
+
+
+def _ends_sentence(text: str) -> bool:
+    return text.rstrip(_CLOSERS).endswith(tuple(_SENTENCE_END))
+
+
+def split_at_sentences(line: TimedLine) -> list[TimedLine]:
+    """Split a line after each sentence end (。！？) using the Whisper word times.
+
+    Needs word times. A cut is made only when the piece before it and the rest are both at least
+    ``MIN_SENTENCE_SECONDS`` long, so one-word crumbs never become lines. A censored line is
+    left alone.
+    """
+    if len(line.words) < 2 or line.censored:
+        return [line]
+    groups: list[list[Word]] = [[]]
+    for i, word in enumerate(line.words):
+        groups[-1].append(word)
+        rest = line.words[i + 1 :]
+        if (
+            rest
+            and _ends_sentence(word.text)
+            and word.end - groups[-1][0].start >= MIN_SENTENCE_SECONDS
+            and rest[-1].end - rest[0].start >= MIN_SENTENCE_SECONDS
+        ):
+            groups.append([])
     if len(groups) == 1:
         return [line]
     return [TimedLine(g[0].start, g[-1].end, "".join(w.text for w in g).strip(), g) for g in groups]
@@ -389,6 +421,9 @@ class WhisperTimer:
         self.cfg = cfg
         self._transport = transport or _FasterWhisperTransport(cfg)
         self._beep_finder = beep_finder or _detect_beeps_in_file
+        # Where to look for beep tones when it is not the audio being transcribed (a separated
+        # voice track may have lost the beep): set by the transcribe stage for each chunk.
+        self.beep_audio: Path | None = None
 
     def _cache_path(self, audio_path: Path) -> Path:
         return audio_path.with_suffix(".whisper.json")
@@ -416,7 +451,7 @@ class WhisperTimer:
         except (OSError, ValueError, KeyError, TypeError):
             pass
         lines = self._transport.transcribe(audio_path, language)
-        beeps = self._beep_finder(audio_path)
+        beeps = self._beep_finder(self.beep_audio or audio_path)
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(
             json.dumps(
@@ -441,4 +476,6 @@ class WhisperTimer:
         if self.cfg.detect_beeps:
             lines = apply_beeps(lines, beeps)
         lines = [piece for line in lines for piece in split_at_pauses(line)]
+        if self.cfg.split_sentences:
+            lines = [piece for line in lines for piece in split_at_sentences(line)]
         return clean_lines(lines, self.cfg.max_segment_seconds, duration)

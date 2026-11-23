@@ -29,9 +29,10 @@ ALL_STAGES: list[type[Stage]] = [
     RenderStage,
 ]
 
-# Version 1: Gemini + VieNeu-TTS only (no audio separation).
+# The stages that run: separate_audio passes through unless the job asks for it.
 V1_STAGES: list[type[Stage]] = [
     ExtractAudioStage,
+    SeparateAudioStage,  # does nothing unless the job has separate_voice switched on
     TranscribeStage,
     TranslateStage,
     ReviewStage,

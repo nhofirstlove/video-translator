@@ -43,8 +43,8 @@ class NineRouterConfig(_Model):
     api_key_env: str = "NINEROUTER_API_KEY"  # optional: 9Router accepts any key unless it asks
     models: list[str] = Field(default_factory=lambda: ["free-combo"])  # tried in this order
     requests_per_minute: int = Field(20, gt=0)
-    timeout_seconds: float = Field(120.0, gt=0)
-    batch_size: int = Field(20, gt=0, le=100)  # lines per request; free models like small ones
+    timeout_seconds: float = Field(300.0, gt=0)
+    batch_size: int = Field(10, gt=0, le=100)  # lines per request; free models like small ones
 
 
 class WhisperConfig(_Model):
@@ -56,9 +56,26 @@ class WhisperConfig(_Model):
     cpu_threads: int = Field(0, ge=0)  # 0 = let the library choose
     max_segment_seconds: float = Field(12.0, gt=1.5)
     detect_beeps: bool = True  # cut lines at bleep tones so the bleeped word gets its own line
-    pause_seconds: float = Field(0.4, ge=0.1, le=3.0)  # a pause this long starts a new line
+    pause_seconds: float = Field(0.2, ge=0.1, le=3.0)  # a pause this long starts a new line
+    split_sentences: bool = True  # also start a new line after each sentence end (。！？)
     vad_threshold: float = Field(0.3, gt=0.0, lt=1.0)  # lower = hears quieter speech
     model_dir: str | None = None  # where to keep the downloaded model (None = default cache)
+
+
+class FitConfig(_Model):
+    """Making the Vietnamese fit the time of each line (translate, re-check, light stretch)."""
+
+    # How many characters of Vietnamese are spoken in a second at a natural pace.
+    chars_per_second: float = Field(15.0, gt=1.0, le=40.0)
+    # How many times the translator is asked to shorten lines that are still too long (0 = never).
+    rewrite_rounds: int = Field(2, ge=0, le=5)
+
+
+class SeparationConfig(_Model):
+    """Voice separation (Demucs): the voice alone is used for timing and transcription."""
+
+    enabled: bool = False  # the default for new videos; the upload form can switch it per video
+    model: str = "htdemucs"  # the Demucs model (downloaded on first use)
 
 
 class VieNeuConfig(_Model):
@@ -96,6 +113,8 @@ class AudioConfig(_Model):
     voice_volume: float = Field(1.0, ge=0)
     background_volume: float = Field(1.0, ge=0)
     ducked_volume: float = Field(0.25, ge=0)
+    # With voice separation: the volume of the separated Chinese voice in the final mix (0 = gone).
+    original_voice_volume: float = Field(0.0, ge=0)
     remove_beeps: bool = (
         True  # silence the original bleep tones (the Vietnamese voice says the word)
     )
@@ -112,6 +131,8 @@ class AppConfig(_Model):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     ninerouter: NineRouterConfig = Field(default_factory=NineRouterConfig)
+    separation: SeparationConfig = Field(default_factory=SeparationConfig)
+    fit: FitConfig = Field(default_factory=FitConfig)
     whisper: WhisperConfig = Field(default_factory=WhisperConfig)
     vieneu: VieNeuConfig = Field(default_factory=VieNeuConfig)
     chunk_minutes: int = Field(5, gt=0)

@@ -39,6 +39,8 @@
 
 .tl-voice-lane { height: 58px; }
 .tl-music-lane { height: 46px; cursor: pointer; }
+.tl-zh-lane { height: 46px; }
+.tl-row[hidden] { display: none; }
 .tl-subs-lane { height: 36px; }
 .tl-blur-lane { height: 30px; }
 
@@ -66,7 +68,7 @@
 body.readonly .tl-h { display: none; }
 body.readonly .tl-block { cursor: pointer; }
 
-.tl-bg-wave { position: absolute; top: 3px; height: calc(100% - 6px); pointer-events: none; }
+.tl-bg-wave, .tl-zh-wave { position: absolute; top: 3px; height: calc(100% - 6px); pointer-events: none; }
 .tl-blur-lane { overflow: visible; }
 .tl-blur-text { position: sticky; left: var(--tl-label); display: inline-block; padding: 0 8px; line-height: 22px; }
 .tl-blur-bar {

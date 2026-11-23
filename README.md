@@ -8,12 +8,373 @@ proxy to free AI models) to translate, with **Gemini** (free tier) as an automat
 no limits). Nothing here needs a paid plan. It runs on Windows, CPU only, and is controlled from
 a small local web page or from the command line.
 
+> **Tiếng Việt:** hướng dẫn cài đặt từng bước bằng tiếng Việt nằm ngay bên dưới phần tiếng Anh
+> ([nhảy tới phần tiếng Việt](#hướng-dẫn-cài-đặt-từng-bước-windows-tiếng-việt)).
+
+## Step-by-step install and setup (Windows, English)
+
+This guide assumes a Windows 10 or 11 PC where **nothing is installed yet**, and that the project
+files are in `C:\video-translator`. You need an internet connection for the downloads (a few GB
+in total, most of it one-time model downloads), about 10 GB of free disk space, and 8 GB of RAM is
+comfortable (4 GB is the minimum). Everything is free; nothing needs a paid plan.
+
+Type the commands in **PowerShell** (Start menu, type `PowerShell`). After installing a program,
+**close PowerShell and open a new one** so it finds the new program.
+
+### Step 1: Install Python
+
+```powershell
+winget install Python.Python.3.12
+```
+
+Close and reopen PowerShell, then check: `python --version` should print 3.10 or newer (3.10 to
+3.12 is the safest). If `winget` is not available, download Python from https://www.python.org/downloads/
+and tick **Add python.exe to PATH** in the installer.
+
+### Step 2: Install ffmpeg (audio and video tool)
+
+```powershell
+winget install Gyan.FFmpeg
+```
+
+Reopen PowerShell, then check: `ffmpeg -version` prints a version line.
+
+### Step 3: Install Node.js (needed only to run 9Router)
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+Reopen PowerShell, then check: `node --version` and `npm --version` print versions.
+
+### Step 4: Create the Python environment and install the tool
+
+```powershell
+cd C:\video-translator
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+```
+
+You should see `(.venv)` at the start of the prompt. This takes a few minutes (it also installs
+Whisper, the speech-timing model package). If PowerShell says running scripts is disabled, run
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once and try the activate line again.
+
+### Step 5: Install the Vietnamese voice (VieNeu-TTS)
+
+With `(.venv)` showing:
+
+```powershell
+pip install vieneu
+```
+
+The voice model downloads from the internet the first time it speaks (a few minutes, once).
+
+### Step 6: Install and set up 9Router (the free translation models)
+
+Open a **second** PowerShell window (9Router keeps running in it) and run:
+
+```powershell
+npm install -g 9router
+9router
+```
+
+Then in your browser:
+
+1. Open `http://localhost:20128`.
+2. Go to **Providers** and connect the free ones you want (for example **Kiro AI** and
+   **OpenCode Free**). Follow the sign-in steps on the page.
+3. Go to **Combos**, create a combo named exactly **`free-combo`** and add your connected free
+   models to it, in the order you prefer.
+4. If your 9Router has key checking on (translation later fails with `401 Invalid API key`), look
+   for **API Keys** or the **Endpoint** page in the dashboard and create or copy a key. You will
+   put it into `.env` in Step 7.
+
+Leave this window open whenever you translate. The tool tries your free models first and only
+uses Gemini (Step 7) if every free model fails or runs out of its monthly limit.
+
+### Step 7: Put your keys in the `.env` file
+
+In the first PowerShell window (the one with `(.venv)`):
+
+```powershell
+copy .env.example .env
+notepad .env
+```
+
+Fill in and save (keep the file name `.env`, not `.env.txt`):
+
+```
+GEMINI_API_KEY=your-key-here
+NINEROUTER_API_KEY=
+```
+
+- **`GEMINI_API_KEY`** (free): create it at https://aistudio.google.com/apikey. It is the safety
+  net when the free 9Router models fail, so please set it.
+- **`NINEROUTER_API_KEY`**: leave empty unless 9Router asked for a key in Step 6, then paste it.
+
+Never share `.env`. Keys are never shown on screen or saved in job files.
+
+### Step 8 (optional): Your own settings in `config\local.yaml`
+
+Do not edit `config\default.yaml`. Create `config\local.yaml` (Notepad, save as that exact name)
+with only what you want to change. The tool re-reads it every time a job starts or resumes.
+Example:
+
+```yaml
+vieneu:
+  voice: "Mai Anh"            # list voices with: video-translator voices
+whisper:
+  model: small                # faster than the default "medium", a little less exact
+ninerouter:
+  models: [free-combo]        # your combo name(s) from the 9Router dashboard
+separation:
+  enabled: false              # true = separate voice and music for every video (Step 9)
+```
+
+### Step 9 (optional): Voice separation for loud music (Demucs)
+
+Only needed for videos where music drowns the speech. With `(.venv)` showing:
+
+```powershell
+pip install demucs
+```
+
+Then tick **Separate the voice from the music first** on the upload page for that video. It takes
+about as long as the video itself on a CPU, and downloads a model (about 80 MB) the first time.
+See "Voice separation" below for what it changes in the editor.
+
+### Step 10: Check that everything works
+
+```powershell
+video-translator doctor
+```
+
+Every line should say `[OK]`. A `[WARN]` is a thing you can fix later (for example a missing
+key or 9Router not running yet); a `[FAIL]` must be fixed first. The doctor also checks that
+9Router answers and knows your `free-combo`. If PowerShell says `video-translator` is not
+recognized, activate the environment (`.venv\Scripts\Activate.ps1`) or use
+`python -m video_translator doctor`.
+
+### Step 11: Translate your first video
+
+```powershell
+video-translator serve
+```
+
+Open http://127.0.0.1:8000, upload a video, and wait. **Try a clip of one or two minutes first**
+to make sure everything works before you start a long video. When the job says "awaiting review",
+read and fix the Vietnamese lines, then press **Approve**. When it is done, download the `.mp4`
+and the `.srt`, or open the **editor** to adjust lines, timing, volumes and the blur box.
+
+The first run downloads the Whisper model (about 0.8 GB) and the voice model; this is normal and
+happens once.
+
+### Every day: how to start
+
+1. **Window 1:** `9router` (leave it open).
+2. **Window 2:**
+
+   ```powershell
+   cd C:\video-translator
+   .venv\Scripts\Activate.ps1
+   video-translator serve
+   ```
+
+3. Open http://127.0.0.1:8000. To stop, press `Ctrl+C` in each window.
+
+After you copy new project files into `C:\video-translator`, stop and restart `serve` and press
+**Ctrl+F5** in the browser. If a job failed, fix the cause and press **Try again (resume)**; the
+steps that already finished are not repeated.
+
+If something goes wrong, see "Troubleshooting" further down this page.
+
+---
+
+## Hướng dẫn cài đặt từng bước (Windows, tiếng Việt)
+
+Hướng dẫn này dành cho máy Windows 10 hoặc 11 **chưa cài gì**, và giả định các file của dự án nằm
+trong `C:\video-translator`. Bạn cần có internet để tải (tổng cộng vài GB, phần lớn là tải
+model một lần), còn trống khoảng 10 GB ổ đĩa, RAM 8 GB là thoải mái (tối thiểu 4 GB). Mọi thứ đều
+miễn phí, không cần gói trả phí nào.
+
+Gõ lệnh trong **PowerShell** (menu Start, gõ `PowerShell`). Sau khi cài một chương trình, hãy
+**đóng PowerShell và mở cửa sổ mới** để máy nhận ra chương trình đó.
+
+### Bước 1: Cài Python
+
+```powershell
+winget install Python.Python.3.12
+```
+
+Đóng và mở lại PowerShell, rồi kiểm tra: `python --version` phải hiện từ 3.10 trở lên (3.10 đến
+3.12 là an toàn nhất). Nếu không có `winget`, tải Python tại https://www.python.org/downloads/ và
+tick ô **Add python.exe to PATH** khi cài.
+
+### Bước 2: Cài ffmpeg (công cụ xử lý âm thanh và video)
+
+```powershell
+winget install Gyan.FFmpeg
+```
+
+Mở lại PowerShell, rồi kiểm tra: `ffmpeg -version` hiện một dòng phiên bản.
+
+### Bước 3: Cài Node.js (chỉ để chạy 9Router)
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+Mở lại PowerShell, rồi kiểm tra: `node --version` và `npm --version` hiện phiên bản.
+
+### Bước 4: Tạo môi trường Python và cài công cụ
+
+```powershell
+cd C:\video-translator
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+```
+
+Đầu dòng lệnh phải có `(.venv)`. Bước này mất vài phút (nó cũng cài Whisper, gói nhận dạng giọng
+nói và canh thời gian). Nếu PowerShell báo bị chặn chạy script, chạy một lần
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` rồi thử lại dòng activate.
+
+### Bước 5: Cài giọng đọc tiếng Việt (VieNeu-TTS)
+
+Khi đang thấy `(.venv)`:
+
+```powershell
+pip install vieneu
+```
+
+Model giọng đọc được tải từ internet ở lần đọc đầu tiên (vài phút, chỉ một lần).
+
+### Bước 6: Cài và thiết lập 9Router (các model dịch miễn phí)
+
+Mở cửa sổ PowerShell **thứ hai** (9Router chạy liên tục trong đó) và chạy:
+
+```powershell
+npm install -g 9router
+9router
+```
+
+Sau đó trong trình duyệt:
+
+1. Mở `http://localhost:20128`.
+2. Vào **Providers** và kết nối các nhà cung cấp miễn phí bạn muốn (ví dụ **Kiro AI** và
+   **OpenCode Free**). Làm theo các bước đăng nhập trên trang.
+3. Vào **Combos**, tạo một combo tên đúng là **`free-combo`** và thêm các model miễn phí đã kết
+   nối vào, theo thứ tự bạn muốn.
+4. Nếu 9Router của bạn bật kiểm tra khóa (khi dịch bị lỗi `401 Invalid API key`), hãy tìm mục
+   **API Keys** hoặc trang **Endpoint** trong dashboard rồi tạo hoặc sao chép một khóa. Bạn sẽ dán
+   khóa đó vào `.env` ở Bước 7.
+
+Hãy để cửa sổ này mở mỗi khi dịch. Công cụ thử các model miễn phí trước, và chỉ dùng Gemini (Bước
+7) khi mọi model miễn phí đều lỗi hoặc hết hạn mức hàng tháng.
+
+### Bước 7: Điền khóa vào file `.env`
+
+Trong cửa sổ PowerShell thứ nhất (cửa sổ có `(.venv)`):
+
+```powershell
+copy .env.example .env
+notepad .env
+```
+
+Điền và lưu (giữ tên file là `.env`, không phải `.env.txt`):
+
+```
+GEMINI_API_KEY=khoa-cua-ban
+NINEROUTER_API_KEY=
+```
+
+- **`GEMINI_API_KEY`** (miễn phí): tạo tại https://aistudio.google.com/apikey. Đây là phương án dự
+  phòng khi các model miễn phí của 9Router lỗi, nên hãy điền.
+- **`NINEROUTER_API_KEY`**: để trống, trừ khi 9Router đã yêu cầu khóa ở Bước 6, khi đó hãy dán vào.
+
+Không chia sẻ file `.env`. Khóa không bao giờ hiện trên màn hình hay lưu trong file công việc.
+
+### Bước 8 (tùy chọn): Cài đặt riêng trong `config\local.yaml`
+
+Đừng sửa `config\default.yaml`. Hãy tạo `config\local.yaml` (Notepad, lưu đúng tên đó) chỉ chứa
+những gì bạn muốn đổi. Công cụ đọc lại file này mỗi khi một công việc bắt đầu hoặc chạy tiếp. Ví dụ:
+
+```yaml
+vieneu:
+  voice: "Mai Anh"            # xem danh sách giọng: video-translator voices
+whisper:
+  model: small                # nhanh hơn "medium" mặc định, kém chính xác hơn một chút
+ninerouter:
+  models: [free-combo]        # tên combo trong dashboard 9Router
+separation:
+  enabled: false              # true = tách giọng khỏi nhạc cho mọi video (Bước 9)
+```
+
+### Bước 9 (tùy chọn): Tách giọng khỏi nhạc khi nhạc quá to (Demucs)
+
+Chỉ cần cho video mà nhạc lấn át tiếng nói. Khi đang thấy `(.venv)`:
+
+```powershell
+pip install demucs
+```
+
+Sau đó tick ô **Separate the voice from the music first** trên trang tải lên cho video đó. Việc
+tách mất khoảng bằng độ dài video trên CPU, và tải một model (khoảng 80 MB) ở lần đầu. Xem mục
+"Voice separation" bên dưới để biết nó thay đổi gì trong trình chỉnh sửa.
+
+### Bước 10: Kiểm tra mọi thứ đã chạy được
+
+```powershell
+video-translator doctor
+```
+
+Mỗi dòng nên là `[OK]`. `[WARN]` là thứ có thể sửa sau (ví dụ thiếu khóa hoặc 9Router chưa chạy);
+`[FAIL]` phải sửa trước. Lệnh này cũng kiểm tra 9Router có trả lời và có biết `free-combo` không.
+Nếu PowerShell báo không nhận ra `video-translator`, hãy kích hoạt môi trường
+(`.venv\Scripts\Activate.ps1`) hoặc dùng `python -m video_translator doctor`.
+
+### Bước 11: Dịch video đầu tiên
+
+```powershell
+video-translator serve
+```
+
+Mở http://127.0.0.1:8000, tải video lên và chờ. **Hãy thử một đoạn dài một hai phút trước** để chắc
+mọi thứ chạy ổn rồi mới làm video dài. Khi công việc báo "awaiting review", hãy đọc và sửa các câu
+tiếng Việt rồi bấm **Approve**. Khi xong, tải file `.mp4` và `.srt`, hoặc mở **editor** để chỉnh
+câu, thời gian, âm lượng và khung làm mờ.
+
+Lần chạy đầu sẽ tải model Whisper (khoảng 0,8 GB) và model giọng đọc; việc này bình thường và chỉ
+xảy ra một lần.
+
+### Mỗi ngày: cách khởi động
+
+1. **Cửa sổ 1:** `9router` (để mở).
+2. **Cửa sổ 2:**
+
+   ```powershell
+   cd C:\video-translator
+   .venv\Scripts\Activate.ps1
+   video-translator serve
+   ```
+
+3. Mở http://127.0.0.1:8000. Để dừng, bấm `Ctrl+C` trong từng cửa sổ.
+
+Sau khi chép file dự án mới vào `C:\video-translator`, hãy dừng rồi chạy lại `serve` và bấm
+**Ctrl+F5** trong trình duyệt. Nếu một công việc bị lỗi, hãy sửa nguyên nhân rồi bấm **Try again
+(resume)**; các bước đã xong sẽ không phải làm lại.
+
+Nếu có sự cố, xem mục "Troubleshooting" (xử lý lỗi, bằng tiếng Anh) ở phía dưới trang này.
+
+---
+
 ## How it works
 
 1. **Extract audio**: ffmpeg pulls the audio out of the video and cuts it into overlapping
    chunks (default 5 minutes).
 2. **Transcribe**: a speech detector listens to the audio and finds each *stretch of speech*;
-   every pause of 0.4 seconds or more starts a new line, and the line's start and end are the
+   every pause of 0.2 seconds or more, and every sentence end (。！？), starts a new line, and the line's start and end are the
    stretch's own start and end. A local speech model (faster-whisper) supplies both the timing
    and the Chinese words, so subtitles line up with the speech. Extra care: a **beep tone** (a
    bleeped swear word) is detected in the audio and gets its own line; if Whisper caught part of
@@ -37,7 +398,9 @@ a small local web page or from the command line.
 Every step saves its progress, so a stopped, paused or failed job resumes without repeating
 finished work. See [docs/architecture.md](docs/architecture.md) for details.
 
-## Getting started
+## Setup details (reference)
+
+The step-by-step guide above is all you need; this section keeps the details.
 
 ffmpeg must be installed separately and available on your `PATH` (Windows:
 `winget install Gyan.FFmpeg`, then reopen the terminal).
@@ -67,8 +430,9 @@ whisper:
   model: small      # tiny / base / small / medium / large-v3
 ```
 
-Two more settings control the line timing: `whisper.pause_seconds` (default 0.4: a pause this
-long starts a new line) and `whisper.vad_threshold` (default 0.3: lower hears quieter speech,
+Three more settings control the line timing: `whisper.pause_seconds` (default 0.2: a pause this
+long starts a new line), `whisper.split_sentences` (default true: also start a new line after
+each sentence end, using Whisper's word times) and `whisper.vad_threshold` (default 0.3: lower hears quieter speech,
 higher ignores more background noise).
 
 Whisper does the listening by itself. Compared with letting Gemini also listen, expect more
@@ -99,10 +463,21 @@ ninerouter:
   base_url: http://localhost:20128/v1
   models: [free-combo]        # tried in order; the next one is tried when one fails
   requests_per_minute: 20
-  batch_size: 20
+  batch_size: 10
 ```
 
-If your 9Router asks for a key, put it in `.env` as `NINEROUTER_API_KEY` (normally not needed).
+If 9Router answers **401 "Invalid API key"**, your 9Router has key checking on. Copy a key from
+its dashboard (`http://localhost:20128`, look for **API Keys** or the **Endpoint** page and use
+its create/copy button), put this line in the `.env` file **in the folder you start the tool
+from** (the same place as `GEMINI_API_KEY`), and restart `serve`:
+
+```
+NINEROUTER_API_KEY=the-key-you-copied
+```
+
+The tool only reads `.env` from the folder you run it in, so start `serve` from
+`C:\video-translator`. If you would rather not use a key, start 9Router with its
+`REQUIRE_API_KEY` setting off (the default).
 A model that fails is rested for a while (15 minutes for a quota error, a day if it is refused
 or does not exist, 2 minutes for a bad answer) and the next model is used. When every model is
 resting or failing, Gemini translates that batch (it needs `GEMINI_API_KEY`, free tier). The
@@ -113,6 +488,51 @@ Free providers can see the transcript text, and they have monthly limits; a long
 up a free model, which is what the fallback is for. The Vietnamese may read less naturally than
 Gemini's, so use the review step. The `python -m video_translator doctor` check tells you whether
 9Router answers.
+
+### How a line is fitted to its time (three steps)
+
+A Vietnamese line is usually longer than the Chinese one, so each line is fitted in three steps:
+
+1. **Write it to fit.** The translator is told each line's time and a maximum length
+   (`fit.chars_per_second`, default 15 characters per second) and may shorten or rephrase freely,
+   keeping the meaning and tone.
+2. **Re-check and rewrite.** Lines that would still need more than a 1.2x speed-up are sent back
+   to the translator to be shortened (up to `fit.rewrite_rounds`, default 2; 0 turns it off). This
+   happens before the review step, so you review the final text. The job message tells how many
+   were shortened and how many are still long.
+3. **Light stretch.** When the voice is made, a clip may run up to 0.3 seconds past its line (but
+   never into the next line); if it is longer it is sped up to 1.2x, rushed up to 1.35x if needed,
+   and a clip shorter than its line is slowed down to at most 0.85x to fill it. A line that still
+   does not fit is marked "too long" in the editor and may run into the silence after it.
+
+### Voice separation (optional, per video)
+
+When music or noise is loud, Whisper can miss quiet lines and the timing gets worse. You can
+split the voice from the music first with **Demucs** (free, runs on your computer). The voice
+alone is then used for the **timing and the transcription only**; the final mix still uses the
+original sound (music and effects stay).
+
+1. With the virtual environment activated, run `pip install demucs`. It also installs PyTorch (a
+   download of a few hundred MB). The first separation downloads the model (about 80 MB), so
+   internet is needed once.
+2. On the upload form, tick **Separate the voice from the music first** for that video. From the
+   command line use `video-translator run video.mp4 --separate-voice`. To make it the default for
+   every video, put `separation: {enabled: true}` in `config/local.yaml`.
+3. Expect the separation to take about as long as the video is long on a CPU (an hour of video
+   takes roughly an hour, plus the usual Whisper time). Every finished two-minute piece is saved,
+   so a stopped job continues where it stopped. Keep it off for videos with clear speech.
+
+With separation on, the final mix is built from the separated parts: the **background music**
+replaces the original sound, so the Chinese voice is gone by default. In the editor the timeline
+shows a separate **Chinese voice** track and a **Background music** track (each with its own mute
+button and waveform), and the volume panel has a slider for each: Vietnamese voice, background
+music, and **Chinese voice** (it starts at 0%; raise it to keep the Chinese voice under the
+dub). Music and Chinese voice are both lowered while the Vietnamese voice speaks. Press "Apply and
+re-render" to hear the exact result; the in-browser preview plays the two parts in step with the
+video.
+
+The beep detector still listens to the original sound, because a separated voice can lose the
+bleep tone. `python -m video_translator doctor` shows whether Demucs is installed.
 
 ### Install the voice (VieNeu-TTS)
 
@@ -300,7 +720,7 @@ video bar is not shown), a timeline of all lines and one row per line:
 
 - **Tracks (timeline)**: under the video there is a timeline like in a video editor, with four
   tracks: the Vietnamese voice (each line is a block with its waveform), the background music
-  (the original audio with its waveform; there is no music/voice separation yet, so it also
+  (the original audio with its waveform; the final mix keeps the music, so it also
   contains the Chinese speech), the subtitles, and the blur (one bar for the whole video;
   click it to jump to the blur settings). Click a block to select that line. **Drag a block**
   to move the line in time and **drag its left or right edge** to change its start or end
@@ -338,7 +758,8 @@ the active line to the current video time.
 
 ### What version 1 does not do
 
-- **No music/voice separation.** The original audio is ducked (lowered to
+- **No music/voice separation in the final mix.** (Separation only helps the listening, see
+  above.) The original audio is ducked (lowered to
   `audio.ducked_volume`, default 25%) under the Vietnamese voice, so the Chinese voice is
   still faintly audible, and so is the music and effects at the lowered level. (Bleep tones of
   censored words are the exception: they are silenced completely.)
@@ -362,7 +783,30 @@ the active line to the current video time.
   the editor. To turn the beep handling off, use `whisper: {detect_beeps: false}`.
 - **A real line is still missing** (quiet speech under loud music): lower
   `whisper: {vad_threshold: 0.2}`; or use `providers: {asr: whisper_gemini}` so Gemini adds lines
-  it hears in a gap. Separating the voice from the music is not built in yet.
+  it hears in a gap; or tick **Separate the voice from the music first** for that video.
+- **I changed a setting but the error still shows the old one**: personal settings go in
+  `C:\video-translator\config\local.yaml` (create it if it is missing; it sits next to
+  `default.yaml`). The tool re-reads it whenever a job starts or resumes, so press "Try again
+  (resume)"; restart `serve` only if that does not help. Example for a combo named `my-combo`:
+
+  ```yaml
+  ninerouter:
+    models: [my-combo]
+  ```
+- **"9Router is not reachable: timed out"**: 9Router is not running, or the free model is slow
+  (a combo can try several models before it answers). Check that the `9router` window is open
+  and `python -m video_translator doctor` says reachable. The wait per request is
+  `ninerouter.timeout_seconds` (default 300); smaller batches answer faster (the default is 10 lines)
+  (`ninerouter: {batch_size: 5}`).
+- **9Router answers 404 "No active credentials for provider: openai"**: 9Router does not know
+  the model name `free-combo`, so it treated it as an OpenAI model. In the dashboard, open
+  **Combos**, create a combo named exactly `free-combo` and add your connected free models to it
+  (or skip the combo and put a model name that 9Router lists in `ninerouter.models`, for example
+  `[kr/claude-sonnet-4.5]`). Run `python -m video_translator doctor`: it lists the names 9Router
+  knows. Then press "Try again (resume)".
+- **"GEMINI_API_KEY is not set"**: only the fallback needs it. Get a free key at
+  https://aistudio.google.com/apikey, add `GEMINI_API_KEY=the-key` to `.env` in
+  `C:\video-translator` (copy `.env.example` to `.env` if you have none), and restart `serve`.
 - **"No free model in 9Router could translate this batch"**: 9Router is not running, or no free
   model is connected. Start `9router`, check the dashboard, and run the doctor command.
 - **Lines are cut too often or too rarely**: change `whisper: {pause_seconds: 0.6}` (longer
@@ -435,8 +879,7 @@ expect to tune the Gemini model name in `config/local.yaml` (`gemini.model`) and
 
 Planned for version 2:
 
-- [ ] Separate vocals from music/effects (Demucs) so the Chinese voice disappears and the
-      background stays at full level (`SeparateAudioStage` is reserved for this)
+- [x] Separate vocals from music/effects (Demucs), per video: done (see "Voice separation")
 - [ ] Local transcription/translation models and GPU use
 - [ ] More than one speaker/voice
 - [ ] Other translation/TTS providers

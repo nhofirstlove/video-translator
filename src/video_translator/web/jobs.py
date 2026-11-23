@@ -109,13 +109,28 @@ def clean_upload_name(filename: str | None) -> str:
 
 
 class JobManager:
+    def _refresh_config(self) -> None:
+        """Pick up edited settings; the folders (paths) stay as the server started with them."""
+        if self.config_loader is None:
+            return
+        try:
+            fresh = self.config_loader()
+        except Exception as exc:  # a broken file: keep running with the settings we have
+            log.warning("Could not re-read the settings, keeping the old ones: %s", exc)
+            return
+        self.config = fresh.model_copy(update={"paths": self.config.paths})
+
     def __init__(
         self,
         config: AppConfig,
         pipeline_factory: PipelineFactory | None = None,
         tts_factory: TTSFactory | None = None,
+        config_loader: Callable[[], AppConfig] | None = None,
     ) -> None:
         self.config = config
+        # Re-read the settings files whenever a job starts, so an edit of config/local.yaml
+        # applies to the next run or resume without restarting the server.
+        self.config_loader = config_loader
         self.pipeline_factory: PipelineFactory = pipeline_factory or default_pipeline_factory
         self.tts_factory = tts_factory  # None = the configured provider (editor: one line)
         self.apply_factory: PipelineFactory = apply_pipeline_factory
@@ -278,8 +293,13 @@ class JobManager:
                 counter += 1
                 candidate = f"{stem} ({counter}){suffix}"
 
-    def create_job(self, filename: str, fileobj: BinaryIO) -> Job:
-        """Stream an uploaded video into the input folder and create a pending job for it."""
+    def create_job(
+        self, filename: str, fileobj: BinaryIO, separate_voice: bool | None = None
+    ) -> Job:
+        """Stream an uploaded video into the input folder and create a pending job for it.
+
+        ``separate_voice`` None = the configured default (``separation.enabled``).
+        """
         name = clean_upload_name(filename)
         path, out = self._unique_path(name)
         size = 0
@@ -294,6 +314,9 @@ class JobManager:
             if size == 0:
                 raise InvalidUpload("The uploaded file is empty.")
             job = Job.create(path, self.config.paths.work)
+            job.separate_voice = (
+                self.config.separation.enabled if separate_voice is None else separate_voice
+            )
             job.save()
         except BaseException:
             path.unlink(missing_ok=True)
@@ -395,6 +418,7 @@ class JobManager:
                     snap.current_stage = stage
 
         try:
+            self._refresh_config()
             pipeline = factory(self.config)
             pipeline.resume(job, on_progress)
         except Exception as exc:  # the pipeline saves FAILED itself; this covers other errors

@@ -28,6 +28,7 @@ from video_translator.models import Job, JobStatus
 from video_translator.pipeline import Pipeline
 from video_translator.providers.tts.vieneu import VieNeuTTS
 from video_translator.stages import build_stages
+from video_translator.utils.ffmpeg import probe_duration
 from video_translator.web.app import create_app
 
 LAUNCH = browser_launch_kwargs()
@@ -551,7 +552,7 @@ def test_timeline_has_tracks_blocks_and_waveforms(make_editor, world):
     page.wait_for_selector(".tl-voice")
     assert page.locator(".tl-voice").count() == len(UTTERANCES)
     assert page.locator(".tl-subs").count() == len(UTTERANCES)
-    names = page.locator(".tl-row .tl-name strong").all_inner_texts()
+    names = page.locator(".tl-row:not([hidden]) .tl-name strong").all_inner_texts()
     assert names == ["Vietnamese voice", "Background music", "Subtitles", "Blur"]
     # one blur bar for the whole video
     assert page.locator(".tl-blur-bar").count() == 1
@@ -638,13 +639,17 @@ def test_timeline_mute_and_hide_buttons_only_change_the_preview(make_editor, wor
     page.locator(".tl-row-voice .tl-btn").click()
     page.locator(".tl-row-music .tl-btn").click()
     state = page.evaluate("EditorAudio._debug().mute")
-    assert state == {"voice": True, "bg": True}
+    assert state == {"voice": True, "bg": True, "zh": False}
     assert page.locator(".tl-row-music.is-off").count() == 1
     # the rest of the page still works and the same buttons turn everything back on
     for kind in ("subs", "blur", "voice", "music"):
         page.locator(f".tl-row-{kind} .tl-btn").click()
     assert page.locator("#ed-stage.tl-hide-subs").count() == 0
-    assert page.evaluate("EditorAudio._debug().mute") == {"voice": False, "bg": False}
+    assert page.evaluate("EditorAudio._debug().mute") == {
+        "voice": False,
+        "bg": False,
+        "zh": False,
+    }
     assert world.job(world.done_id).model_dump(mode="json")["segments"] == before  # nothing saved
 
 
@@ -806,3 +811,69 @@ def test_layout_is_three_to_one_on_a_wide_window_even_with_long_lines(make_edito
     assert left / right == pytest.approx(3.0, rel=0.08)
     assert right < total * 0.3
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_separated_voice_and_music_are_tracks_with_their_own_volumes(make_editor, world, tmp_path):
+    from tests.test_stems import add_stems
+
+    plain = make_editor(world.done_id)
+    plain.page.wait_for_selector(".tl-voice")
+    assert plain.page.locator(".tl-row-zh").is_hidden()
+    assert plain.page.locator("#ea-vol-zh").is_hidden()
+    assert plain.page.locator("label[for=ea-vol-bg]").inner_text() == "Background volume"
+
+    job_id = world._new_job(tmp_path, "stems")
+    job = world.job(job_id)
+    add_stems(job, total=probe_duration(job.artifacts["audio"]))
+    job.save()
+    ed = make_editor(job_id)
+    page = ed.page
+    page.wait_for_selector(".tl-voice")
+    wait_until(lambda: page.locator(".tl-row-zh").is_visible(), 10, "Chinese voice track")
+    assert "separated from the voice" in page.locator(".tl-row-music .tl-hint").inner_text()
+    wait_until(lambda: page.locator(".tl-row-zh .tl-zh-wave").is_visible(), 10, "its waveform")
+    assert page.locator("#ea-vol-zh").is_visible()
+    assert page.locator("#ea-vol-zh").input_value() == "0"  # the Chinese voice starts silent
+    assert page.locator("label[for=ea-vol-bg]").inner_text() == "Background music volume"
+
+    page.locator("#ea-vol-zh").fill("0.5")
+    wait_until(lambda: "saved" in page.locator(".ea-save").inner_text().lower(), 10, "saved note")
+    wait_until(lambda: world.job(job_id).audio_overrides.get("original_voice_volume") == 0.5, 10)
+
+    page.locator(".tl-row-zh .tl-btn").click()
+    assert page.evaluate("EditorAudio._debug().mute.zh") is True
+    assert page.locator(".tl-row-zh.is-off").count() == 1
+    page.locator(".tl-row-zh .tl-btn").click()
+    assert page.evaluate("EditorAudio._debug().mute.zh") is False
+
+    # playing: the video's own sound is replaced by the two separated parts, in step with it
+    page.locator("#ea-preview-toggle").check()
+    page.evaluate("document.getElementById('ed-video').play()")
+    wait_until(lambda: page.evaluate("EditorAudio._debug().stems.active"), 15, "stems active")
+    wait_until(
+        lambda: (
+            page.evaluate(
+                "window.__media.filter(m => m.src.includes('/media/stem/') && !m.paused).length"
+            )
+            == 2
+        ),
+        15,
+        "both parts playing",
+    )
+    wait_until(
+        lambda: (
+            abs(page.evaluate("EditorAudio._debug().stems.zh") - 0.5) < 0.03
+            and abs(page.evaluate("EditorAudio._debug().stems.music") - 1.0) < 0.03
+        ),
+        10,
+        "each part at its own volume",
+    )
+    drift = page.evaluate(
+        "Math.max(...window.__media.filter(m => m.src.includes('/media/stem/'))"
+        ".map(m => Math.abs(m.currentTime - document.getElementById('ed-video').currentTime)))"
+    )
+    assert drift < 0.5
+    page.evaluate("document.getElementById('ed-video').pause()")
+    wait_until(
+        lambda: page.evaluate("window.__media.filter(m => !m.paused).length") == 0, 10, "all paused"
+    )

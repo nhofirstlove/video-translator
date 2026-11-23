@@ -90,8 +90,14 @@ def create_app(
     pipeline_factory: PipelineFactory | None = None,
     tts_factory: TTSFactory | None = None,
 ) -> FastAPI:
+    reload_settings = config is None  # settings loaded from the files can be re-read per job
     config = config if config is not None else load_config()
-    manager = JobManager(config, pipeline_factory, tts_factory)
+    manager = JobManager(
+        config,
+        pipeline_factory,
+        tts_factory,
+        config_loader=load_config if reload_settings else None,
+    )
 
     app = FastAPI(title="video-translator")
     app.state.config = config
@@ -124,6 +130,7 @@ def create_app(
             "progress": progress,
             "segments": len(job.segments),
             "review_approved": job.review_approved,
+            "separate_voice": job.separate_voice,
             "downloads": {
                 kind: _artifact_path(manager, job, kind) is not None for kind in DOWNLOADS
             },
@@ -154,8 +161,12 @@ def create_app(
 
     @app.post("/api/jobs")
     @app.post("/jobs", include_in_schema=False)
-    def create_job(file: UploadFile = File(...), start: bool = Query(True)) -> dict[str, Any]:
-        job = manager.create_job(file.filename or "", file.file)
+    def create_job(
+        file: UploadFile = File(...),
+        start: bool = Query(True),
+        separate_voice: bool | None = Query(None),
+    ) -> dict[str, Any]:
+        job = manager.create_job(file.filename or "", file.file, separate_voice)
         if start:
             manager.start(job.id)
         return job_json(manager.get(job.id))
@@ -229,6 +240,7 @@ def create_app(
             "review": config.review,
             "providers": config.providers.model_dump(),
             "chunk_minutes": config.chunk_minutes,
+            "separate_voice": manager.config.separation.enabled,
             "gemini_model": config.gemini.model,
             "keys_set": {
                 "gemini": bool(os.environ.get("GEMINI_API_KEY", "").strip()),

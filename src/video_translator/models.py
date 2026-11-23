@@ -3,6 +3,7 @@
 Artifact keys (``Job.artifacts``) used by the version 1 pipeline:
 
 - ``"audio"``: full-length 44.1 kHz stereo wav extracted from the video.
+- ``"vocals"``, ``"background"``: the separated voice and the rest (only with ``separate_voice``).
 - ``"voice_track"``: aligned Vietnamese voice-only wav, full length.
 - ``"mixed_audio"``: the final audio (voice track mixed with the original sound).
 - ``"srt"``: Vietnamese subtitles file.
@@ -81,6 +82,9 @@ class Job(BaseModel):
     audio_overrides: dict[str, float] = Field(default_factory=dict)
     # Blur-box settings chosen for this video in the editor (keys of ``BlurConfig``).
     blur_overrides: dict[str, Any] = Field(default_factory=dict)
+    # Switched on per video: Demucs splits the voice from the music first, and the voice alone is
+    # used for the timing and the transcription (the final mix still uses the original sound).
+    separate_voice: bool = False
 
     @classmethod
     def create(cls, input_path: str | Path, work_root: str | Path) -> Job:

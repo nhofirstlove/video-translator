@@ -78,7 +78,7 @@ def test_full_run_with_review_edit_and_resume(tmp_path, monkeypatch):
     # ---- run 1: stops at the review gate --------------------------------------------------
     job = pipeline_for(config).run(job)
     assert job.status == JobStatus.AWAITING_REVIEW
-    assert job.completed_stages == ["extract_audio", "transcribe", "translate"]
+    assert job.completed_stages == ["extract_audio", "separate_audio", "transcribe", "translate"]
     assert len(job.chunks) == 3  # 12 s chunks overlapping by 5 s over a 40 s video
     assert len(job.segments) == len(UTTERANCES)  # overlapping chunks were de-duplicated
     for seg, (start, end, zh) in zip(job.segments, UTTERANCES, strict=True):

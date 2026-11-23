@@ -52,10 +52,12 @@
     mounted: false,
     pps: 30,
     minPps: 0.05,
-    off: { voice: false, music: false, subs: false, blur: false },
+    off: { voice: false, zh: false, music: false, subs: false, blur: false },
     voicePeaks: {},       // index -> {duration, peaks}
     voiceRate: 50,
     bg: null,             // {duration, peaks}
+    zh: null,             // {duration, peaks}: the separated Chinese voice (only with voice separation)
+    stems: false,
     bgRate: 20,
     keys: {},             // index -> "has_audio|audio_stale|speed" (to know when a clip changed)
     holdFollowUntil: 0,
@@ -191,6 +193,18 @@
     drawWave(c, T.bg.peaks, T.bgRate, x0 / T.pps, w, els.musicLane.clientHeight - 6 || 38, colour("--ok", "#2da44e"));
   }
 
+  function drawZh() {
+    var c = els.zhCanvas;
+    if (!T.stems || !T.zh || !T.zh.peaks.length) { c.hidden = true; return; }
+    c.hidden = false;
+    var x0 = Math.max(0, els.scroll.scrollLeft);
+    var x1 = Math.min(laneWidth(), x0 + viewWidth() + 2);
+    var w = Math.max(1, x1 - x0);
+    c.style.left = x0 + "px";
+    c.style.width = w + "px";
+    drawWave(c, T.zh.peaks, T.bgRate, x0 / T.pps, w, els.zhLane.clientHeight - 6 || 38, colour("--warn", "#9a6700"));
+  }
+
   function drawRuler() {
     var r = visibleRange();
     var step = STEPS[STEPS.length - 1];
@@ -214,6 +228,7 @@
     if (!T.mounted) return;
     drawRuler();
     drawBackground();
+    drawZh();
     var r = visibleRange();
     segs().forEach(function (s) {
       if (s.end < r.a - 1 || s.start > r.b + 1) return;
@@ -325,6 +340,7 @@
   // ---------- mute / hide ----------
   var BUTTONS = {
     voice: { word: "Mute", done: "Muted" },
+    zh: { word: "Mute", done: "Muted" },
     music: { word: "Mute", done: "Muted" },
     subs: { word: "Hide", done: "Hidden" },
     blur: { word: "Hide", done: "Hidden" }
@@ -337,7 +353,7 @@
       stage.classList.toggle("tl-hide-blur", T.off.blur);
     }
     if (window.EditorAudio && window.EditorAudio.setMute) {
-      window.EditorAudio.setMute({ voice: T.off.voice, bg: T.off.music });
+      window.EditorAudio.setMute({ voice: T.off.voice, bg: T.off.music, zh: T.off.zh });
     }
     Object.keys(BUTTONS).forEach(function (k) {
       var btn = els.buttons[k], on = T.off[k];
@@ -529,6 +545,13 @@
       T.voiceRate = res.voice_rate || 50;
       T.bg = res.background || null;
       T.bgRate = res.background_rate || 20;
+      T.stems = !!res.stems;
+      T.zh = res.voice_zh || null;
+      if (els.rows) {
+        els.rows.zh.hidden = !T.stems;
+        var hint = els.rows.music.querySelector(".tl-hint");
+        if (hint) hint.textContent = T.stems ? "separated from the voice" : "original audio";
+      }
       Object.keys(blocks).forEach(function (k) { blocks[k].drawn = ""; });
       schedule();
     }, function () { /* no waveforms: blocks still work */ });
@@ -612,11 +635,16 @@
     var rulerRow = h("div", { class: "tl-row tl-row-ruler" }, [h("div", { class: "tl-label tl-label-empty" }), ruler]);
 
     var v = row("voice", "Vietnamese voice", "one block per line", "tl-voice-lane");
+    var zhRow = row("zh", "Chinese voice", "separated", "tl-zh-lane");
+    zhRow.row.hidden = true;  // shown only when the voice was separated from the music
     var m = row("music", "Background music", "original audio", "tl-music-lane");
     var s = row("subs", "Subtitles", "Vietnamese", "tl-subs-lane");
     var b = row("blur", "Blur", "whole video", "tl-blur-lane");
     els.voiceLane = v.lane;
     els.musicLane = m.lane;
+    els.zhLane = zhRow.lane;
+    els.zhCanvas = h("canvas", { class: "tl-zh-wave", "aria-hidden": "true", hidden: true });
+    zhRow.lane.appendChild(els.zhCanvas);
     els.subsLane = s.lane;
     els.bgCanvas = h("canvas", { class: "tl-bg-wave", "aria-hidden": "true", hidden: true });
     m.lane.appendChild(els.bgCanvas);
@@ -629,7 +657,7 @@
     b.lane.appendChild(els.blurBar);
 
     els.playhead = h("div", { class: "tl-playhead", "aria-hidden": "true" });
-    els.inner = h("div", { class: "tl-inner" }, [rulerRow, v.row, m.row, s.row, b.row, els.playhead]);
+    els.inner = h("div", { class: "tl-inner" }, [rulerRow, v.row, zhRow.row, m.row, s.row, b.row, els.playhead]);
     els.scroll = h("div", { class: "tl-scroll", tabindex: "0", role: "group", "aria-label": "Timeline tracks" }, [els.inner]);
     els.tip = h("div", { class: "tl-tip", hidden: true, role: "status" });
     host.appendChild(els.scroll);
@@ -671,7 +699,7 @@
     if (!host || T.mounted || !E() || !E().state) return;
     mount(host);
     T.mounted = true;
-    ["voice", "music", "subs", "blur"].forEach(function (k) { T.off[k] = pref("off_" + k, "0") === "1"; });
+    ["voice", "zh", "music", "subs", "blur"].forEach(function (k) { T.off[k] = pref("off_" + k, "0") === "1"; });
     updateMin();
     var saved = Number(pref("pps", ""));
     T.pps = clamp(saved > 0 ? saved : Math.max(fitPps(), 20), T.minPps, MAX_PPS);

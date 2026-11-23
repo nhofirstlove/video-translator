@@ -10,6 +10,12 @@ split over a chain of ``volume`` filters with ~40 ranges each (each active only 
 window), and the graph is passed as a script file, so the command line stays short on Windows
 however long the video is. After amix (normalize=0) a single-pass loudnorm evens the level.
 
+With voice separation (``job.separate_voice``) the mix is built from the separated parts: the
+background music (``artifacts['background']``) replaces the original sound, and the separated
+Chinese voice (``artifacts['vocals']``) is added at ``audio.original_voice_volume`` (0 by
+default, so only the music and the Vietnamese voice remain). Both parts are ducked and have the
+bleep tones silenced like the original sound.
+
 Bleep tones (a censored word replaced by a steady tone in the original) are found in the chunk
 audio files and silenced in the original completely, so only the Vietnamese voice says the word
 (setting ``audio.remove_beeps: false`` keeps them).
@@ -105,8 +111,13 @@ def find_beep_spans(job: Job) -> list[tuple[float, float]]:
         detect_beeps,
     )
 
+    def original(path: Path) -> Path:
+        # with voice separation job.chunks hold the separated voice: the beep may be missing there
+        first = job.work_dir / "chunks" / path.name
+        return first if first.is_file() else path
+
     sources: list[tuple[Path, float]] = [
-        (Path(c.path), c.start) for c in job.chunks if Path(c.path).is_file()
+        (original(Path(c.path)), c.start) for c in job.chunks if Path(c.path).is_file()
     ]
     if not sources and job.artifacts.get("audio"):
         sources = [(Path(job.artifacts["audio"]), 0.0)]
@@ -131,7 +142,10 @@ def build_graph(
     config: AppConfig,
     overrides: dict[str, float] | None = None,
     mute: list[tuple[float, float]] | None = None,
+    vocals: bool = False,
 ) -> str:
+    """The ffmpeg filter graph. Inputs: 0 = original sound (or the separated background music),
+    1 = the Vietnamese voice track, 2 (only with ``vocals``) = the separated Chinese voice."""
     audio = effective_audio(config, overrides)
     bg = audio.background_volume
     ratio = min(audio.ducked_volume / bg, 1.0) if bg > 0 else 1.0
@@ -147,12 +161,32 @@ def build_graph(
         "aformat=sample_fmts=fltp:channel_layouts=stereo",
         f"volume={audio.voice_volume:.4f}",
     ]
+    zh_chain = [
+        f"aresample={OUT_RATE}",
+        "aformat=sample_fmts=fltp:channel_layouts=stereo",
+        *mute_filters(mute or []),
+        f"volume={audio.original_voice_volume:.4f}",
+        *duck_filters(ranges, ratio),
+    ]
+    zh_part = f"[2:a]{','.join(zh_chain)}[zh];\n" if vocals else ""
+    inputs, count = ("[bg][voice][zh]", 3) if vocals else ("[bg][voice]", 2)
     return (
         f"[0:a]{','.join(bg_chain)}[bg];\n"
         f"[1:a]{','.join(voice_chain)}[voice];\n"
-        "[bg][voice]amix=inputs=2:duration=first:normalize=0:dropout_transition=0[mix];\n"
+        f"{zh_part}"
+        f"{inputs}amix=inputs={count}:duration=first:normalize=0:dropout_transition=0[mix];\n"
         f"[mix]loudnorm=I=-16:TP=-1.5:LRA=50,aresample={OUT_RATE}[out]"
     )
+
+
+def separated_parts(job: Job) -> tuple[Path, Path] | None:
+    """``(background, vocals)`` when this job separated the voice and both files exist."""
+    if not job.separate_voice:
+        return None
+    background, vocals = job.artifacts.get("background"), job.artifacts.get("vocals")
+    if background and vocals and Path(background).is_file() and Path(vocals).is_file():
+        return Path(background), Path(vocals)
+    return None
 
 
 class MixStage(Stage):
@@ -167,12 +201,20 @@ class MixStage(Stage):
             raise FileNotFoundError("The voice track (artifacts['voice_track']) is missing.")
         ranges = speech_ranges(job)
         beeps = find_beep_spans(job) if config.audio.remove_beeps else []
+        parts = separated_parts(job)
+        music, vocals = parts if parts else (Path(original), None)
+        use_vocals = vocals is not None and (
+            effective_audio(config, job.audio_overrides).original_voice_volume > 0
+        )
         script = job.work_dir / "mix_filter.txt"
-        script.write_text(build_graph(ranges, config, job.audio_overrides, beeps), encoding="utf-8")
+        script.write_text(
+            build_graph(ranges, config, job.audio_overrides, beeps, vocals=use_vocals),
+            encoding="utf-8",
+        )
         out = job.work_dir / "mixed.wav"
         tmp = job.work_dir / "mixed.part.wav"
         run_ffmpeg_filter_file(
-            ["-i", original, "-i", voice],
+            ["-i", music, "-i", voice, *(["-i", vocals] if use_vocals else [])],
             script,
             ["-map", "[out]", "-c:a", "pcm_s16le", tmp],
             desc="mix voice and background",
@@ -180,5 +222,7 @@ class MixStage(Stage):
         tmp.replace(out)
         job.artifacts["mixed_audio"] = out
         note = f", {len(beeps)} beeps silenced" if beeps else ""
+        if parts:
+            note += ", Chinese voice kept" if use_vocals else ", Chinese voice removed"
         job.message = f"Mixed audio ready ({len(ranges)} speech passages ducked{note})"
         return job

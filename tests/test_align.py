@@ -61,11 +61,17 @@ def test_atempo_chain_and_plan():
     assert atempo_chain(1.3) == ["atempo=1.30000"]
     assert atempo_chain(3.0) == ["atempo=2.0", "atempo=1.50000"]
     assert atempo_chain(0.3)[0] == "atempo=0.5"
-    # fits: unchanged; short: 0.9; too long: 1.3 + flag
+    # fits: unchanged; short: slowed to fill the slot (0.85 at most); light overrun allowed;
+    # normal speed-up 1.2; rushed 1.35; beyond that: flag
     assert plan_clip(1.8, 2.0, 2.0, 5.0) == (1.0, [], None)
-    assert plan_clip(0.5, 2.0, 2.0, 5.0)[0] == 0.9
+    assert plan_clip(0.5, 2.0, 2.0, 5.0)[0] == 0.85
+    assert plan_clip(1.7, 2.0, 2.0, 5.0)[0] == pytest.approx(0.85)
+    assert plan_clip(1.25, 1.0, 5.0, 9.0) == (1.0, [], None)  # 0.25 s past the slot is fine
+    assert plan_clip(1.5, 1.0, 5.0, 9.0)[0] == pytest.approx(1.5 / 1.3)  # window is 1.3 s
+    tempo, flags, cut = plan_clip(1.6, 1.0, 1.4, 5.0)  # normal 1.2 is enough: 1.33 > 1.3 -> rushed
+    assert (round(tempo, 3), flags, cut) == (1.231, [], None)
     tempo, flags, cut = plan_clip(3.0, 1.0, 1.4, 5.0)
-    assert (tempo, flags, cut) == (1.3, ["too_long"], None)
+    assert (tempo, flags, cut) == (1.35, ["too_long"], None)
     tempo, flags, cut = plan_clip(3.0, 1.0, 1.4, 1.5)
     assert flags == ["too_long", "truncated"] and cut == 1.5
 
@@ -75,9 +81,9 @@ def test_speedup_within_gap_no_flag_and_timeline_positions(tmp_path):
         tmp_path,
         [
             (1.0, 3.0, 1.9),  # fits: untouched
-            (4.0, 5.0, 0.4),  # short: slowed to 0.9x
+            (4.0, 5.0, 0.4),  # short: slowed to 0.85x
             (8.0, 9.0, 1.32),  # next at 9.2: available 1.1 -> speed up 1.2x
-            (9.2, 10.0, 3.5),  # last: runs to the end of the audio, 12 s
+            (9.2, 10.0, 1.1),  # last: slot 0.8 s + 0.3 s overrun, untouched
         ],
         total=12.0,
     )
@@ -86,9 +92,9 @@ def test_speedup_within_gap_no_flag_and_timeline_positions(tmp_path):
     assert all(s.flags == [] for s in segs)
     durations = [probe_duration(s.aligned_path) for s in segs]
     assert durations[0] == pytest.approx(1.9, abs=0.03)
-    assert durations[1] == pytest.approx(0.4 / 0.9, abs=0.03)
+    assert durations[1] == pytest.approx(0.4 / 0.85, abs=0.03)
     assert durations[2] == pytest.approx(1.1, abs=0.03)
-    assert durations[3] == pytest.approx(2.8, abs=0.03)
+    assert durations[3] == pytest.approx(1.1, abs=0.03)
     track = job.artifacts["voice_track"]
     assert track == job.work_dir / "voice_track.wav"
     assert probe_duration(track) == pytest.approx(12.0, abs=0.01)
@@ -102,7 +108,7 @@ def test_speedup_within_gap_no_flag_and_timeline_positions(tmp_path):
         assert all(abs(v) < 100 for v in before)  # and not earlier
     first, last = active_span(track)
     assert first == pytest.approx(1.0, abs=0.02)
-    assert last == pytest.approx(9.2 + 2.8, abs=0.05)
+    assert last == pytest.approx(9.2 + 1.1, abs=0.05)
     assert job.message.startswith("Aligned 4 lines")
 
 
@@ -111,8 +117,8 @@ def test_too_long_flag_without_truncation(tmp_path):
     AlignStage().run(job, AppConfig())
     assert job.segments[0].flags == ["too_long"]
     assert job.segments[1].flags == []
-    # speech was sped up 1.3x (not cut): ~1.92 s, ending before the next line at 2.0
-    assert probe_duration(job.segments[0].aligned_path) == pytest.approx(2.5 / 1.3, abs=0.03)
+    # speech was rushed 1.35x (not cut): ~1.85 s, ending before the next line at 2.0
+    assert probe_duration(job.segments[0].aligned_path) == pytest.approx(2.5 / 1.35, abs=0.03)
     assert "too long" in job.message
 
 

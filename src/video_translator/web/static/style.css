@@ -164,3 +164,6 @@ textarea.vi {
 }
 
 @media (prefers-reduced-motion: reduce) { .progress-bar { transition: none; } }
+
+.check { display: flex; gap: 0.6rem; align-items: flex-start; margin: 0.75rem 0; cursor: pointer; }
+.check input { margin-top: 0.25rem; }

@@ -16,7 +16,7 @@ JSON errors: `{"detail": "<plain-language message>"}` with a 4xx status. Nothing
    "media": {"video": true, "dub_video": false, "voice_track": false},
    "segments": [{"index":0,"start":1.2,"end":4.0,"text_zh":"..","text_vi":"..","flags":["too_long"],
                  "has_audio":true,"audio_stale":false,"speed":null,"chars":42}],
-   "audio": {"voice_volume":1.0,"background_volume":1.0,"ducked_volume":0.25},
+   "audio": {"voice_volume":1.0,"background_volume":1.0,"ducked_volume":0.25,"original_voice_volume":0.0,"has_stems":false},
    "budget": null}
   ```
   `budget` is always null (kept for compatibility: voice generation is free). `chars` = number of characters of `text_vi`.
@@ -27,7 +27,7 @@ JSON errors: `{"detail": "<plain-language message>"}` with a 4xx status. Nothing
 - `GET /api/jobs/{id}/segments/{i}/cost` -> `{"chars":42,"remaining":null,"allowed":true,"message":"Free: runs on your computer; may take a few seconds."}` (kept for compatibility; the page no longer calls it).
 - `POST /api/jobs/{id}/segments/{i}/regenerate` (no body needed; `{"confirm":true}` is still accepted) -> updated segment. Runs at once: speaks this one line with VieNeu-TTS (free, local), clears `audio_stale`, re-fits the clip to its time slot (aligned clip). Never returns 402. Errors: 400 for an unknown voice, 502 with a plain message when the voice engine is missing, unreachable or fails (nothing changes).
 - `POST /api/jobs/{id}/segments/{i}/speed` body `{"speed": 1.15}` (0.7 to 1.5) or `{"speed": null}` (clear the user speed: the line is fitted automatically again) -> updated segment. No new voice is made: re-creates the aligned clip from the raw clip with ffmpeg tempo change. 409 if the line has no raw clip.
-- `PUT /api/jobs/{id}/audio-settings` body `{"voice_volume","background_volume","ducked_volume"}` (each 0.0 to 2.0; ducked <= background) -> same object. Stored on the job and used by the mix stage instead of the config values.
+- `PUT /api/jobs/{id}/audio-settings` body `{"voice_volume","background_volume","ducked_volume"}` plus optional `"original_voice_volume"` (the separated Chinese voice; omitted = unchanged) (each 0.0 to 2.0; ducked <= background) -> same object. `has_stems` is true when the voice was separated from the music (`job.separate_voice`); then `background_volume` is the music alone. Stored on the job and used by the mix stage instead of the config values.
 - `POST /api/jobs/{id}/apply` -> `{"started":true,"missing_audio":[3,17]}`. Rebuilds without any paid call: subtitles (.srt), align, mix, render, using the current segments/volumes. Lines without a clip stay silent (their indexes are returned in `missing_audio` but the run still starts). Progress is read from `GET /api/jobs/{id}` (existing endpoint: status, current_stage, message). If a job is already running -> 409.
 
 ## Blur box (U4, `editor_blur.js` / `editor_blur.css`)
@@ -46,7 +46,7 @@ JSON errors: `{"detail": "<plain-language message>"}` with a 4xx status. Nothing
 - `GET /api/jobs/{id}/waveforms` -> `{"voice_rate": 50, "voice": {"3": {"duration": 2.4, "peaks": [0..100, ...]}, ...},
   "background_rate": 20, "background": {"duration": 3601.2, "peaks": [...]} | null}`. One entry in `voice` per line that has a clip
   (keyed by line index; the clip sits at the line's `start`); `background` is the original audio (music and speech together,
-  there is no separation yet). `?index=N` returns only `voice` for that line (no background). Peaks are the loudest sample per
+  separation only helps the listening, so the original audio is shown). `?index=N` returns only `voice` for that line (no background). Peaks are the loudest sample per
   slice, 0 to 100. 404 for an unknown line.
 - Frontend: `editor_timeline.js` mounts `<div id="tracks-panel">` under the video on `Editor` 'ready': tracks Voice, Background
   music, Subtitles, Blur; zoom; per-track mute (voice, music) or hide (subtitles, blur) that only affects the preview in the
@@ -59,6 +59,7 @@ JSON errors: `{"detail": "<plain-language message>"}` with a 4xx status. Nothing
 - `GET /api/jobs/{id}/media/video` -> the original input video.
 - `GET /api/jobs/{id}/media/dub` -> the finished dubbed mp4 (`artifacts["output"]`), 404 if not finished.
 - `GET /api/jobs/{id}/media/voice` -> `artifacts["voice_track"]` wav if it exists.
+- `GET /api/jobs/{id}/media/stem/{vocals|background}` -> small aac copy of the separated Chinese voice / background music (404 unless the job separated the voice). `GET /waveforms` then also returns `"stems": true` and `"voice_zh"` (peaks of the Chinese voice), and `background` is the music alone.
 Only files inside the job/work/input/output folders are ever served.
 
 ## Frontend contract between U2 and U3 (both are plain browser JS, no build step, no CDN)

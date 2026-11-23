@@ -5,14 +5,15 @@ Outputs: segment.aligned_path (``<work_dir>/aligned/seg_XXXXX.wav``, 48 kHz mono
          artifacts['voice_track'] (``<work_dir>/voice_track.wav``, silence + clips at their
          start times, same length as the original audio).
 
-Fitting rules (``available`` = time until 0.1 s before the next clip starts, at least the
-slot ``end - start``):
+Fitting rules (the third step of fitting a line; the translator already wrote it to fit and
+rewrote lines that were too long). ``slot`` = ``end - start``; the clip may run up to 0.3 s
+past the slot, never past 0.1 s before the next clip starts (the "window"):
 
-* clip longer than available: speed up (ffmpeg ``atempo``) by the needed factor, at most
-  1.3x. If still too long the flag ``too_long`` is set and the overflow is allowed to run
-  into the following gap; it is only cut (80 ms fade-out, flag ``truncated``) if it would
-  run into the next clip.
-* clip shorter than 0.6 of the slot: slowed to 0.9x. Otherwise left as is.
+* clip longer than the window: sped up (ffmpeg ``atempo``) by the needed factor, up to 1.2x. If
+  that is not enough it is rushed up to 1.35x. If it still does not fit, the flag ``too_long`` is
+  set and the overflow is allowed to run into the following gap; it is only cut (80 ms
+  fade-out, flag ``truncated``) if it would run into the next clip.
+* clip shorter than 0.9 of the slot: slowed down to fill it, at most to 0.85x.
 """
 
 from __future__ import annotations
@@ -30,10 +31,12 @@ from video_translator.utils.ffmpeg import probe_duration, run_ffmpeg
 
 SAMPLE_RATE = 48000
 GAP = 0.1  # keep this much silence before the next clip when stretching into the gap
-MAX_SPEEDUP = 1.3
+STRETCH_MAX = 1.2  # the normal speed-up
+MAX_SPEEDUP = 1.35  # rushed, only when the normal speed-up is not enough
+OVERRUN = 0.3  # a clip may run this long past its slot when the next line starts later
 FIT_FLAGS = ("too_long", "truncated", "needs_realign")
-MIN_SLOWDOWN = 0.9
-SHORT_RATIO = 0.6
+MIN_SLOWDOWN = 0.85
+SHORT_RATIO = 0.9
 FADE = 0.08
 MIN_LIMIT = 0.3
 SILENCE_CHUNK = 1 << 20
@@ -63,11 +66,14 @@ def plan_clip(
     """
     flags: list[str] = []
     tempo = 1.0
-    if duration > available:
-        needed = duration / max(available, 1e-3)
-        tempo = min(needed, MAX_SPEEDUP)
-        if needed > MAX_SPEEDUP + 1e-6:
-            flags.append("too_long")
+    window = max(slot, min(slot + OVERRUN, available))
+    if duration > window + 1e-6:
+        needed = duration / window
+        tempo = min(needed, STRETCH_MAX)
+        if duration / tempo > window + 1e-6:  # a normal speed-up is not enough: rush it
+            tempo = min(needed, MAX_SPEEDUP)
+            if needed > MAX_SPEEDUP + 1e-6:
+                flags.append("too_long")
     elif slot > 0 and duration < SHORT_RATIO * slot:
         tempo = max(MIN_SLOWDOWN, duration / slot)
     new_duration = duration / tempo

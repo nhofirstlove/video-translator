@@ -20,6 +20,11 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="translate one video")
     run.add_argument("video", help="path to the input Chinese video")
     run.add_argument("--config", default=None, help="path to a YAML config file")
+    run.add_argument(
+        "--separate-voice",
+        action="store_true",
+        help="split the voice from the music first (Demucs; slow on a CPU) for better timing",
+    )
 
     resume = sub.add_parser("resume", help="continue a paused, reviewed or failed job")
     resume.add_argument("job_dir", help="the job folder printed by `run`")
@@ -67,7 +72,7 @@ def _execute(job: Job, config: AppConfig) -> int:
     return 0
 
 
-def run_command(video: str, config_path: str | None) -> int:
+def run_command(video: str, config_path: str | None, separate_voice: bool = False) -> int:
     try:
         config = load_config(config_path)
     except ConfigError as exc:
@@ -78,6 +83,7 @@ def run_command(video: str, config_path: str | None) -> int:
         print(f"Input video not found: {input_path}", file=sys.stderr)
         return 1
     job = Job.create(input_path.resolve(), config.paths.work)
+    job.separate_voice = separate_voice or config.separation.enabled
     print(f"Job folder: {job.work_dir}")
     return _execute(job, config)
 
@@ -155,7 +161,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "say":
         return say_command(args.text, args.voice, args.out, args.config)
     if args.command == "run":
-        return run_command(args.video, args.config)
+        return run_command(args.video, args.config, args.separate_voice)
     if args.command == "resume":
         return resume_command(args.job_dir, args.config, args.approve)
     if args.command == "serve":

@@ -18,8 +18,8 @@ ninerouter:                   # the 9Router program on this computer (see the RE
   api_key_env: NINEROUTER_API_KEY   # optional; 9Router accepts any key unless it asks for one
   models: [free-combo]        # model or combo names from the 9Router dashboard, tried in order
   requests_per_minute: 20
-  timeout_seconds: 120
-  batch_size: 20              # lines per request (free models answer small requests better)
+  timeout_seconds: 300
+  batch_size: 10              # lines per request (free models answer small requests better)
 
 gemini:
   model: "gemini-3.6-flash"   # Gemini 3.6 Flash (API model code); change here to use another model
@@ -31,9 +31,18 @@ whisper:                      # local speech timing (pip install faster-whisper,
   beam_size: 1                # 1 = fastest; 5 = slightly more accurate text
   cpu_threads: 0              # 0 = automatic
   detect_beeps: true          # bleeped (censored) words get their own line; Gemini writes the word
-  pause_seconds: 0.4          # a pause in the speech this long starts a new line (timing comes from the sound)
+  pause_seconds: 0.2          # a pause in the speech this long starts a new line (timing comes from the sound)
+  split_sentences: true       # also start a new line after each sentence end (。！？)
   vad_threshold: 0.3          # speech detector sensitivity: lower hears quieter speech, higher ignores more noise
   max_segment_seconds: 12     # longer lines are cut at a pause so one subtitle never lasts too long
+
+fit:                          # make the Vietnamese fit each line's time (translate, re-check, light stretch)
+  chars_per_second: 15        # Vietnamese characters spoken per second at a natural pace
+  rewrite_rounds: 2           # times the translator is asked to shorten lines that are still too long
+
+separation:                   # split the voice from the music before listening (needs: pip install demucs)
+  enabled: false              # default for new videos; the upload form has a checkbox per video
+  model: htdemucs             # Demucs model; on a CPU the separation takes about as long as the video
 
 vieneu:                       # free local text to speech (pip install vieneu)
   mode: library               # library = runs inside this program; server = a separate VieNeu server

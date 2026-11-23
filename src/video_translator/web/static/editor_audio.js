@@ -82,7 +82,8 @@
     return {
       voice: clamp(num(a.voice_volume, 1), 0, 2),
       bg: bg,
-      ducked: clamp(num(a.ducked_volume, 0.25), 0, bg)
+      ducked: clamp(num(a.ducked_volume, 0.25), 0, bg),
+      zh: clamp(num(a.original_voice_volume, 0), 0, 2)
     };
   }
   function jobStatus() {
@@ -346,8 +347,17 @@
   var P = {
     ctx: null, bg: null, voice: null, vsrc: null, graph: false, pref: null,
     entries: {}, cache: {}, inflight: {}, failed: {}, nIn: 0, lastSweep: 0, timer: null, wired: false,
-    mute: { voice: false, bg: false }, mutedByUs: false
+    mute: { voice: false, bg: false, zh: false }, mutedByUs: false, vg: null
   };
+  /* Separated parts (voice kept apart from the music): two extra audio elements played in sync with the video. */
+  var Z = { built: false, failed: false, music: null, zh: null, gm: null, gz: null };
+
+  function hasStems() {
+    var E = ed(), a = E && E.state && E.state.audio;
+    return !!(a && a.has_stems) && !Z.failed;
+  }
+  /* While the finished dub plays, its mixed sound comes from the video itself. */
+  function stemsMode() { return !!(P.graph && Z.built && hasStems() && !dubPlaying()); }
 
   function anyClip() { return segments().some(function (s) { return s.has_audio; }); }
   /* While the finished dubbed mp4 is playing it already contains the voice: never add the preview on top. */
@@ -384,12 +394,64 @@
     }
     P.bg = ctx.createGain();
     P.voice = ctx.createGain();
-    P.vsrc.connect(P.bg);
+    P.vg = ctx.createGain();
+    P.vsrc.connect(P.vg);
+    P.vg.connect(P.bg);
     P.bg.connect(ctx.destination);
     P.voice.connect(ctx.destination);
     P.graph = true;
+    buildStems(ctx);
     applyMute();
     return true;
+  }
+
+  function stemAudio(kind) {
+    var a = new Audio();
+    a.preload = "auto";
+    a.src = jobBase() + "/media/stem/" + kind + "?v=" + epoch;
+    a.addEventListener("error", function () { Z.failed = true; applyMute(); });
+    return a;
+  }
+
+  function buildStems(ctx) {
+    if (Z.built || !hasStems()) return;
+    try {
+      Z.music = stemAudio("background");
+      Z.zh = stemAudio("vocals");
+      Z.gm = ctx.createGain();
+      Z.gz = ctx.createGain();
+      ctx.createMediaElementSource(Z.music).connect(Z.gm);
+      ctx.createMediaElementSource(Z.zh).connect(Z.gz);
+      Z.gm.connect(P.bg);
+      Z.gz.connect(P.bg);
+      Z.built = true;
+    } catch (e) {
+      Z.failed = true;
+    }
+  }
+
+  /* Levels of the separated parts: the sliders while the dub preview is on, the plain original sound otherwise. */
+  function applyStemGains() {
+    if (!P.graph || !Z.built) return;
+    var a = audioState(), now = P.ctx.currentTime, on = stemsMode(), pv = previewEnabled();
+    function set(node, v) { node.gain.cancelScheduledValues(now); node.gain.setTargetAtTime(v, now, 0.02); }
+    set(Z.gm, on ? (muted("bg") ? 0 : (pv ? a.bg : 1)) : 0);
+    set(Z.gz, on ? (muted("zh") ? 0 : (pv ? a.zh : 1)) : 0);
+    set(P.vg, on ? 0 : 1);
+  }
+
+  /* Keep both parts in step with the video: play, pause, seek, speed. */
+  function syncStems() {
+    if (!Z.built) return;
+    var E = ed(), v = E && E.video;
+    if (!v) return;
+    var play = stemsMode() && !v.paused && !v.ended && !v.seeking;
+    [Z.music, Z.zh].forEach(function (a) {
+      if (!play) { if (!a.paused) a.pause(); return; }
+      if (Math.abs(a.currentTime - v.currentTime) > 0.2) { try { a.currentTime = v.currentTime; } catch (e) { /* not ready */ } }
+      if (a.playbackRate !== v.playbackRate) a.playbackRate = v.playbackRate || 1;
+      if (a.paused) { var p = a.play(); if (p && p.catch) p.catch(noop); }
+    });
   }
 
   /* Track mute buttons of the timeline (preview only). Not while the finished dub plays: its sound is already mixed. */
@@ -401,6 +463,7 @@
     var now = P.ctx.currentTime;
     P.voice.gain.cancelScheduledValues(now);
     P.voice.gain.setTargetAtTime(muted("voice") ? 0 : a.voice, now, 0.02);
+    applyStemGains();
   }
 
   /* Without the Web Audio graph the original sound comes straight from the video element. */
@@ -420,7 +483,9 @@
     m = m || {};
     if (typeof m.voice === "boolean") P.mute.voice = m.voice;
     if (typeof m.bg === "boolean") P.mute.bg = m.bg;
+    if (typeof m.zh === "boolean") P.mute.zh = m.zh;
     applyMute();
+    syncStems();
   }
 
   function liveEntries(now) {
@@ -441,6 +506,11 @@
     var keep = muted("bg") ? 0 : 1;
     var base = (previewEnabled() ? a.bg : 1) * keep;
     var duck = (previewEnabled() ? a.ducked : 1) * keep;
+    if (stemsMode()) {
+      // each part has its own level (applyStemGains); this node only lowers both under the voice
+      base = 1;
+      duck = previewEnabled() && a.bg > 0 ? Math.min(a.ducked / a.bg, 1) : 1;
+    }
     var cur = g.value;
     g.cancelScheduledValues(now);
     g.setValueAtTime(cur, now);
@@ -565,6 +635,7 @@
     if (!E || !E.video) return;
     var v = E.video;
     var enabled = previewEnabled();
+    if (P.graph) { applyStemGains(); syncStems(); }
     if (!enabled) {
       if (hasEntries()) clearAll();
       if (P.graph) applyBg();
@@ -624,7 +695,9 @@
     P.wired = true;
     var v = E.video;
     ["play", "playing", "seeked", "ratechange"].forEach(function (n) { v.addEventListener(n, previewResync); });
-    ["pause", "seeking", "waiting", "ended", "emptied"].forEach(function (n) { v.addEventListener(n, function () { clearAll(); }); });
+    ["pause", "seeking", "waiting", "ended", "emptied"].forEach(function (n) {
+      v.addEventListener(n, function () { clearAll(); syncStems(); });
+    });
     // Resume a suspended AudioContext on the first user gesture.
     var onGesture = function () {
       if (P.ctx && P.ctx.state === "suspended") P.ctx.resume().then(previewResync).catch(noop);
@@ -658,7 +731,8 @@
       inflight: Object.keys(P.inflight),
       voiceGain: P.graph ? P.voice.gain.value : null,
       bgGain: P.graph ? P.bg.gain.value : null,
-      mute: { voice: P.mute.voice, bg: P.mute.bg },
+      mute: { voice: P.mute.voice, bg: P.mute.bg, zh: P.mute.zh },
+      stems: { available: hasStems(), active: stemsMode(), music: Z.gm ? Z.gm.gain.value : null, zh: Z.gz ? Z.gz.gain.value : null },
       target: a
     };
   }
@@ -711,9 +785,10 @@
     // sliders
     var v = sliderRow("ea-vol-voice", "Voice volume");
     var b = sliderRow("ea-vol-bg", "Background volume");
+    var z = sliderRow("ea-vol-zh", "Chinese voice volume");
     var d = sliderRow("ea-vol-duck", "Background while voice speaks");
-    refs.v = v; refs.b = b; refs.d = d;
-    var sl = h("div", { class: "ea-sliders" }, [v.row, b.row, d.row]);
+    refs.v = v; refs.b = b; refs.d = d; refs.z = z;
+    var sl = h("div", { class: "ea-sliders" }, [v.row, b.row, z.row, d.row]);
     el.appendChild(sl);
     refs.saveState = h("p", { class: "ea-hint ea-save", role: "status", "aria-live": "polite" });
     el.appendChild(refs.saveState);
@@ -721,10 +796,11 @@
     function onSlider(which) {
       var E = ed();
       if (!E || !E.state) return;
-      if (!E.state.audio) E.state.audio = { voice_volume: 1, background_volume: 1, ducked_volume: 0.25 };
+      if (!E.state.audio) E.state.audio = { voice_volume: 1, background_volume: 1, ducked_volume: 0.25, original_voice_volume: 0 };
       var a = E.state.audio;
       a.voice_volume = Number(v.input.value);
       a.background_volume = Number(b.input.value);
+      a.original_voice_volume = Number(z.input.value);
       a.ducked_volume = Math.min(Number(d.input.value), a.background_volume);
       if (which === "bg" && a.ducked_volume > a.background_volume) a.ducked_volume = a.background_volume;
       syncSliders(true);
@@ -735,6 +811,7 @@
     }
     v.input.addEventListener("input", function () { onSlider("voice"); });
     b.input.addEventListener("input", function () { onSlider("bg"); });
+    z.input.addEventListener("input", function () { onSlider("zh"); });
     d.input.addEventListener("input", function () { onSlider("duck"); });
 
     // apply
@@ -771,7 +848,10 @@
   function syncSliders(keepFocus) {
     if (!panel) return;
     var a = audioState();
-    var pairs = [[panel.v, a.voice], [panel.b, a.bg], [panel.d, a.ducked]];
+    var stems = hasStems();
+    panel.z.row.hidden = !stems;
+    panel.b.row.querySelector(".ea-lab").textContent = stems ? "Background music volume" : "Background volume";
+    var pairs = [[panel.v, a.voice], [panel.b, a.bg], [panel.d, a.ducked], [panel.z, a.zh]];
     panel.d.input.max = String(a.bg);
     pairs.forEach(function (p) {
       if (!keepFocus || document.activeElement !== p[0].input) p[0].input.value = String(p[1]);
@@ -802,9 +882,9 @@
     var a = audioState();
     var seq = ++saveSeq;
     if (panel) panel.saveState.textContent = "Saving...";
-    api("PUT", jobBase() + "/audio-settings", {
-      voice_volume: a.voice, background_volume: a.bg, ducked_volume: a.ducked
-    }).then(function () {
+    var body = { voice_volume: a.voice, background_volume: a.bg, ducked_volume: a.ducked };
+    if (hasStems()) body.original_voice_volume = a.zh;
+    api("PUT", jobBase() + "/audio-settings", body).then(function () {
       if (panel && seq === saveSeq) panel.saveState.textContent = "Volume settings saved.";
     }, function (err) {
       if (panel && seq === saveSeq) panel.saveState.textContent = "Could not save the volume settings.";
@@ -898,7 +978,9 @@
     renderApply();
     // Flush any pending volume save first so the render uses what the sliders show.
     var a = audioState();
-    api("PUT", jobBase() + "/audio-settings", { voice_volume: a.voice, background_volume: a.bg, ducked_volume: a.ducked })
+    var settings = { voice_volume: a.voice, background_volume: a.bg, ducked_volume: a.ducked };
+    if (hasStems()) settings.original_voice_volume = a.zh;
+    api("PUT", jobBase() + "/audio-settings", settings)
       .catch(noop)
       .then(function () { return api("POST", jobBase() + "/apply"); })
       .then(function (res) {

@@ -205,7 +205,7 @@ def test_config_defaults_and_provider_is_registered():
     cfg = AppConfig()
     assert cfg.providers.translation == "ninerouter" and cfg.providers.asr == "whisper"
     assert registry.get("translation", "ninerouter") is NineRouterTranslation
-    assert cfg.ninerouter.models == ["free-combo"] and cfg.ninerouter.batch_size == 20
+    assert cfg.ninerouter.models == ["free-combo"] and cfg.ninerouter.batch_size == 10
 
 
 def test_http_transport_speaks_openai_chat_format(monkeypatch):
@@ -331,3 +331,101 @@ def test_default_providers_are_registered_by_the_stages():
     cfg = AppConfig()
     assert registry.get("asr", cfg.providers.asr) is WhisperOnlyASR
     assert registry.get("translation", cfg.providers.translation) is NineRouterTranslation
+
+
+def _words(spec):
+    from video_translator.providers.asr.whisper_timing import Word
+
+    return [Word(a, b, t) for a, b, t in spec]
+
+
+def test_sentences_are_split_at_sentence_ends_using_word_times():
+    from video_translator.providers.asr.whisper_timing import TimedLine, split_at_sentences
+
+    words = _words(
+        [
+            (0.0, 0.5, "老婆,"),
+            (0.5, 1.4, "我今晚加班不回家了。"),
+            (1.4, 2.0, "我有"),
+            (2.0, 3.6, "一个特殊的能力。"),
+            (3.6, 4.4, "老公,"),
+            (4.4, 5.76, "你回来了。"),
+        ]
+    )
+    line = TimedLine(0.0, 5.76, "".join(w.text for w in words), words)
+    parts = split_at_sentences(line)
+    assert [p.text for p in parts] == [
+        "老婆,我今晚加班不回家了。",
+        "我有一个特殊的能力。",
+        "老公,你回来了。",
+    ]
+    assert [(p.start, p.end) for p in parts] == [(0.0, 1.4), (1.4, 3.6), (3.6, 5.76)]
+
+
+def test_sentence_split_keeps_crumbs_and_censored_lines_together():
+    from video_translator.providers.asr.whisper_timing import TimedLine, split_at_sentences
+
+    words = _words([(0.0, 1.0, "好的。"), (1.0, 1.15, "嗯"), (1.15, 2.0, "走吧")])
+    line = TimedLine(0.0, 2.0, "好的。嗯走吧", words)
+    assert [p.text for p in split_at_sentences(line)] == ["好的。", "嗯走吧"]
+    tail = _words([(0.0, 1.0, "好的"), (1.0, 1.1, "。")])
+    assert len(split_at_sentences(TimedLine(0.0, 1.1, "好的。", tail))) == 1  # tiny end piece
+    censored = TimedLine(0.0, 2.0, "", words, censored=True)
+    assert split_at_sentences(censored) == [censored]
+    assert split_at_sentences(TimedLine(0.0, 2.0, "没有词", []))[0].text == "没有词"
+
+
+def test_whisper_defaults_split_more():
+    cfg = AppConfig().whisper
+    assert cfg.pause_seconds == 0.2 and cfg.split_sentences is True
+
+
+def test_doctor_checks_key_and_model_names():
+    import io
+    import urllib.error
+
+    from video_translator.doctor import FAIL, OK, WARN, check_ninerouter
+
+    def lists(*ids):
+        body = json.dumps({"data": [{"id": i} for i in ids]}).encode()
+        return lambda req, timeout: io.BytesIO(body)
+
+    assert check_ninerouter("gemini").status == OK
+    assert check_ninerouter(models=("free-combo",), opener=lists("free-combo", "kr/x")).status == OK
+    missing = check_ninerouter(models=("free-combo",), opener=lists("kr/claude-sonnet-4.5"))
+    assert missing.status == WARN and "kr/claude-sonnet-4.5" in missing.message
+    assert "Combos" in missing.message
+
+    def refuse(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 401, "no", {}, None)
+
+    refused = check_ninerouter(opener=refuse)
+    assert refused.status == WARN and "NINEROUTER_API_KEY" in refused.message
+    assert FAIL not in refused.status
+
+
+def test_unknown_model_error_tells_how_to_fix_it():
+    error = NineRouterError("answered 404: No active credentials for provider: openai", 404)
+    router = FakeRouter({"free-combo": [error]})
+    p = provider(router, gemini=FakeGeminiTransport([ValueError("no key")]))
+    with pytest.raises(TranslationError, match="create a combo"):
+        p.translate_batch(SEGS)
+
+
+def test_edited_settings_are_picked_up_by_the_next_job(tmp_path):
+    from video_translator.web.jobs import JobManager
+
+    old, new = AppConfig(), AppConfig()
+    new.ninerouter.models = ["my-combo"]
+    manager = JobManager(old, config_loader=lambda: new)
+    manager._refresh_config()
+    assert manager.config.ninerouter.models == ["my-combo"]
+    assert manager.config.paths == old.paths
+
+    def broken() -> AppConfig:
+        raise ValueError("bad yaml")
+
+    manager.config_loader = broken
+    manager._refresh_config()  # keeps the settings it has
+    assert manager.config.ninerouter.models == ["my-combo"]
+    assert JobManager(old).config_loader is None

@@ -30,8 +30,10 @@ Rules:
 - Keep names (people, places, brands) consistent across segments and with the context.
 - Keep numbers, dates and units correct.
 - Do NOT merge or split segments: return exactly one output per input id.
-- Each segment has "seconds" (the time slot) and "max_chars" (target maximum length of the
-  Vietnamese text, about {rate} characters per second). When the slot is short, be concise.
+- Each segment has "seconds" (the time slot) and "max_chars" (the maximum length of the
+  Vietnamese text, about {rate} characters per second). The dubbed voice must fit the slot, so
+  keep within max_chars: shorten and rephrase freely, keep the meaning and the tone, and drop
+  small details when the slot is short.
 - "context" (if present) holds the previous segments with their Vietnamese translation. It is
   read-only: use it for consistency, do NOT translate or return it.
 - A segment whose "zh" is （哔） is a word that was bleeped out in the original and could not be
@@ -46,13 +48,31 @@ Reply with JSON only, in exactly this shape:
 """
 
 
+SHORTEN_TEMPLATE = """\
+You shorten Vietnamese dubbing lines so that they can be spoken within a time slot.
+
+Rules:
+- Each segment has the Chinese original "zh", the current Vietnamese "vi", the time slot
+  "seconds" and "max_chars", the longest the new Vietnamese may be.
+- Rewrite "vi" so that it has at most max_chars characters: shorter wording, keep the meaning
+  and the tone, drop small details if needed. Natural spoken Vietnamese, no abbreviations.
+- Do NOT merge or split segments: return exactly one output per input id.
+
+Input JSON:
+{payload}
+
+Reply with JSON only, in exactly this shape:
+{{"segments": [{{"id": 0, "vi": "..."}}]}}
+"""
+
+
 class TranslationError(RuntimeError):
     """The model's answer could not be turned into one translation per segment."""
 
 
-def max_chars_for(seconds: float) -> int:
+def max_chars_for(seconds: float, rate: float = VI_CHARS_PER_SECOND) -> int:
     """Target maximum Vietnamese length for a segment lasting ``seconds``."""
-    return max(MIN_MAX_CHARS, round(max(seconds, 0.0) * VI_CHARS_PER_SECOND))
+    return max(MIN_MAX_CHARS, round(max(seconds, 0.0) * rate))
 
 
 def parse_response(text: str, expected_ids: Sequence[int]) -> dict[int, str]:
@@ -106,6 +126,9 @@ class GeminiTranslation(TranslationProvider):
         self._config = config
         self.batch_size = batch_size
         self.context_size = context_size
+        self.chars_per_second = float(
+            config.fit.chars_per_second if config is not None else VI_CHARS_PER_SECOND
+        )
 
     @property
     def client(self) -> GeminiClient:
@@ -158,6 +181,37 @@ class GeminiTranslation(TranslationProvider):
             f"after 2 attempts: {last_error}."
         )
 
+    def shorten_batch(self, batch: Sequence[Segment], limits: Sequence[int]) -> list[str]:
+        """Rewrite ``text_vi`` of each segment to at most ``limits[i]`` characters."""
+        prompt = self._build_shorten_prompt(batch, limits)
+        ids = list(range(len(batch)))
+        last_error = ""
+        for _attempt in range(2):
+            text = self.client.generate_text(prompt, json_mode=True)
+            try:
+                parsed = parse_response(text, ids)
+            except TranslationError as exc:
+                last_error = str(exc)
+                continue
+            return [parsed[i] for i in ids]
+        raise TranslationError(f"Gemini did not return usable shorter lines: {last_error}.")
+
+    @staticmethod
+    def _build_shorten_prompt(batch: Sequence[Segment], limits: Sequence[int]) -> str:
+        payload = {
+            "segments": [
+                {
+                    "id": i,
+                    "zh": seg.text_zh,
+                    "vi": seg.text_vi,
+                    "seconds": round(seg.duration, 2),
+                    "max_chars": int(limit),
+                }
+                for i, (seg, limit) in enumerate(zip(batch, limits, strict=True))
+            ]
+        }
+        return SHORTEN_TEMPLATE.format(payload=json.dumps(payload, ensure_ascii=False, indent=1))
+
     def _build_prompt(self, batch: Sequence[Segment], context: Sequence[Segment]) -> str:
         payload: dict[str, object] = {
             "segments": [
@@ -165,7 +219,7 @@ class GeminiTranslation(TranslationProvider):
                     "id": i,
                     "zh": seg.text_zh,
                     "seconds": round(seg.duration, 2),
-                    "max_chars": max_chars_for(seg.duration),
+                    "max_chars": max_chars_for(seg.duration, self.chars_per_second),
                 }
                 for i, seg in enumerate(batch)
             ]
@@ -178,5 +232,6 @@ class GeminiTranslation(TranslationProvider):
         if ctx:
             payload["context"] = ctx
         return PROMPT_TEMPLATE.format(
-            rate=VI_CHARS_PER_SECOND, payload=json.dumps(payload, ensure_ascii=False, indent=1)
+            rate=round(self.chars_per_second),
+            payload=json.dumps(payload, ensure_ascii=False, indent=1),
         )

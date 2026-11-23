@@ -188,17 +188,35 @@ def check_ninerouter(
     models: tuple[str, ...] = ("free-combo",),
     opener: Callable[..., object] | None = None,
 ) -> CheckResult:
-    """9Router answers at its address (only when translation uses it)."""
+    """9Router answers, accepts the key and knows the configured models (only when it is used)."""
     if translation != "ninerouter":
         return CheckResult("9Router", OK, f"not used (providers.translation is {translation})")
+    import json
+    import urllib.error
     import urllib.request
 
-    url = base_url.rstrip("/") + "/models"
+    key = os.environ.get("NINEROUTER_API_KEY", "").strip() or "sk_9router"
+    request = urllib.request.Request(
+        base_url.rstrip("/") + "/models", headers={"Authorization": f"Bearer {key}"}
+    )
     try:
-        response = (opener or urllib.request.urlopen)(url, timeout=3)
+        response = (opener or urllib.request.urlopen)(request, timeout=3)
+        try:
+            body = response.read()  # type: ignore[attr-defined]
+        except Exception:
+            body = b""
         close = getattr(response, "close", None)
         if close:
             close()
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return CheckResult(
+                "9Router",
+                WARN,
+                f"9Router refused the key ({exc.code}); copy a key from its dashboard "
+                "(http://localhost:20128) and put NINEROUTER_API_KEY=<key> in .env",
+            )
+        return CheckResult("9Router", WARN, f"9Router at {base_url} answered {exc.code}")
     except Exception:  # not running, wrong address, refused
         return CheckResult(
             "9Router",
@@ -206,8 +224,43 @@ def check_ninerouter(
             f"cannot reach 9Router at {base_url}; start it with `9router` (then Gemini would "
             "translate everything, if it has a key)",
         )
+    try:
+        known = [str(m["id"]) for m in json.loads(body)["data"] if isinstance(m, dict)]
+    except (ValueError, KeyError, TypeError):
+        known = []
+    if known:
+        missing = [m for m in models if m not in known]
+        if len(missing) == len(models):
+            shown = ", ".join(known[:8]) + (" ..." if len(known) > 8 else "")
+            return CheckResult(
+                "9Router",
+                WARN,
+                f"reachable, but it does not list {', '.join(missing)}; create a combo with "
+                "that name in the dashboard (Combos) or set ninerouter.models to a name it "
+                f"lists, for example: {shown}",
+            )
     return CheckResult(
         "9Router", OK, f"reachable at {base_url}; models tried in order: {', '.join(models)}"
+    )
+
+
+def check_demucs(
+    enabled: bool = False, importer: Callable[[str], object] = importlib.import_module
+) -> CheckResult:
+    """The voice-separation package imports (a warning only when separation is the default)."""
+    try:
+        importer("demucs")
+        installed = True
+    except Exception:
+        installed = False
+    if installed:
+        return CheckResult("demucs", OK, "installed; tick the box on the upload form to use it")
+    status = WARN if enabled else OK
+    return CheckResult(
+        "demucs",
+        status,
+        "not installed (optional: separates the voice from loud music before listening); "
+        "to use it, in the activated virtual environment run `pip install demucs`",
     )
 
 
@@ -227,6 +280,7 @@ def run_checks() -> list[CheckResult]:
     mode, server_url = "library", "http://localhost:8000"
     asr, whisper_model = "whisper", "medium"
     translation, nr_url, nr_models = "ninerouter", "http://localhost:20128/v1", ("free-combo",)
+    separation_on = False
     if config_result.status == OK:
         from video_translator.config import load_config
 
@@ -236,6 +290,7 @@ def run_checks() -> list[CheckResult]:
         asr, whisper_model = cfg.providers.asr, cfg.whisper.model
         translation = cfg.providers.translation
         nr_url, nr_models = cfg.ninerouter.base_url, tuple(cfg.ninerouter.models)
+        separation_on = cfg.separation.enabled
     return [
         check_python(),
         check_tool("ffmpeg"),
@@ -246,6 +301,7 @@ def run_checks() -> list[CheckResult]:
         check_ninerouter(translation, nr_url, nr_models),
         check_whisper(asr, whisper_model),
         check_vieneu(mode, server_url),
+        check_demucs(separation_on),
         config_result,
     ]
 

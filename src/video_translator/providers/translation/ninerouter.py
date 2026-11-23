@@ -85,7 +85,13 @@ class _HttpTransport:
                 raw = response.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:300] if exc.fp else ""
-            raise NineRouterError(f"9Router answered {exc.code}: {detail}", exc.code) from exc
+            hint = (
+                " (9Router wants an API key: copy it from the 9Router dashboard and put "
+                "NINEROUTER_API_KEY=<key> in .env, then restart)"
+                if exc.code == 401
+                else ""
+            )
+            raise NineRouterError(f"9Router answered {exc.code}: {detail}{hint}", exc.code) from exc
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
             raise NineRouterError(f"9Router is not reachable: {exc}") from exc
         try:
@@ -207,6 +213,26 @@ class NineRouterTranslation(TranslationProvider):
         if not batch:
             return []
         prompt = self.fallback._build_prompt(batch, context)  # the same prompt for every model
+        return self._ask(
+            prompt, batch, lambda: self.fallback.translate_batch(batch, context), "translate"
+        )
+
+    def shorten_batch(self, batch: Sequence[Segment], limits: Sequence[int]) -> list[str]:
+        """Shorter wording for lines that are too long for their time (same models, same order)."""
+        if not batch:
+            return []
+        prompt = self.fallback._build_shorten_prompt(batch, limits)
+        return self._ask(
+            prompt, batch, lambda: self.fallback.shorten_batch(batch, limits), "shorten"
+        )
+
+    def _ask(
+        self,
+        prompt: str,
+        batch: Sequence[Segment],
+        use_gemini: Callable[[], list[str]],
+        what: str,
+    ) -> list[str]:
         ids = list(range(len(batch)))
         zh = [s.text_zh for s in batch]
         for model in self.models:
@@ -226,31 +252,44 @@ class NineRouterTranslation(TranslationProvider):
                 except TranslationError as exc:
                     self._why[model] = f"unusable answer ({exc})"
                     continue
-                self.lines_by[model] = self.lines_by.get(model, 0) + len(batch)
+                if what == "translate":
+                    self.lines_by[model] = self.lines_by.get(model, 0) + len(batch)
                 return translations
             else:
                 self._rest(model, COOLDOWN_BAD, self._why.get(model, "unusable answers"))
-        return self._use_gemini(batch, context)
+        return self._use_gemini(batch, use_gemini, what)
 
     def _on_call_error(self, model: str, exc: NineRouterError) -> None:
         code = exc.code
         if code in (402, 429):
             self._rest(model, COOLDOWN_QUOTA, f"out of quota or rate limited ({code})")
         elif code in (400, 401, 403, 404):
-            self._rest(model, COOLDOWN_REFUSED, f"refused or unknown ({code}): {exc}")
+            hint = ""
+            if code in (400, 404) and (
+                "No active credentials" in str(exc) or "model_not" in str(exc)
+            ):
+                hint = (
+                    f". 9Router does not know a model or combo named {model!r}: create a combo "
+                    "with that name in the 9Router dashboard (Combos), or set ninerouter.models "
+                    "to a name from its model list; `video-translator doctor` shows the names"
+                )
+            self._rest(model, COOLDOWN_REFUSED, f"refused or unknown ({code}): {exc}{hint}")
         else:
             self._rest(model, COOLDOWN_BAD, str(exc))
 
-    def _use_gemini(self, batch: Sequence[Segment], context: Sequence[Segment]) -> list[str]:
+    def _use_gemini(
+        self, batch: Sequence[Segment], call: Callable[[], list[str]], what: str = "translate"
+    ) -> list[str]:
         reasons = "; ".join(f"{m}: {self._why.get(m, 'resting')}" for m in self.models) or "none"
         try:
-            translations = self.fallback.translate_batch(batch, context)
+            translations = call()
         except QuotaExhaustedError:
             raise
         except Exception as exc:
             raise TranslationError(
-                f"No free model in 9Router could translate this batch ({reasons}), and the "
+                f"No free model in 9Router could {what} this batch ({reasons}), and the "
                 f"Gemini fallback failed too: {exc}"
             ) from exc
-        self.lines_by["Gemini"] = self.lines_by.get("Gemini", 0) + len(batch)
+        if what == "translate":
+            self.lines_by["Gemini"] = self.lines_by.get("Gemini", 0) + len(batch)
         return translations

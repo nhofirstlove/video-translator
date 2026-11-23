@@ -155,6 +155,14 @@ class TranscribeStage(Stage):
             local = _load_cached(cache, chunk, tag)
             if local is None:
                 job.message = f"Transcribing chunk {number}/{total}"
+                timer = getattr(provider, "timer", None)
+                if (
+                    timer is not None
+                ):  # a separated voice may have lost the beeps: look in the original
+                    original = job.work_dir / "chunks" / chunk.path.name
+                    timer.beep_audio = (
+                        original if original != chunk.path and original.is_file() else None
+                    )
                 try:
                     local = provider.transcribe(
                         chunk.path, language="zh", duration=chunk.end - chunk.start

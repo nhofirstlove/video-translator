@@ -138,7 +138,13 @@ def test_editor_data_shape(env):
     assert first["audio_stale"] is False and first["speed"] is None
     assert first["chars"] == LINE_CHARS
     assert first["text_zh"] == "第0句话" and first["flags"] == []
-    assert data["audio"] == {"voice_volume": 1.0, "background_volume": 1.0, "ducked_volume": 0.25}
+    assert data["audio"] == {
+        "voice_volume": 1.0,
+        "background_volume": 1.0,
+        "ducked_volume": 0.25,
+        "original_voice_volume": 0.0,
+        "has_stems": False,
+    }
     assert data["budget"] is None
 
 
@@ -402,10 +408,11 @@ def test_audio_settings_validation_and_storage(env):
     job_id = env.make_job()
     url = f"/api/jobs/{job_id}/audio-settings"
     good = {"voice_volume": 1.2, "background_volume": 0.5, "ducked_volume": 0.1}
+    extra = {"original_voice_volume": 0.0, "has_stems": False}
     res = env.client.put(url, json=good)
-    assert res.status_code == 200 and res.json() == good
+    assert res.status_code == 200 and res.json() == {**good, **extra}
     assert env.job(job_id).audio_overrides == good
-    assert env.client.get(f"/api/jobs/{job_id}/editor").json()["audio"] == good
+    assert env.client.get(f"/api/jobs/{job_id}/editor").json()["audio"] == {**good, **extra}
     for bad in (
         {**good, "voice_volume": 2.5},
         {**good, "background_volume": -0.1},

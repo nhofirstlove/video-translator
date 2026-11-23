@@ -53,7 +53,7 @@ def test_web_upload_review_approve_download(tmp_path, monkeypatch):
             assert info["status"] == "awaiting_review", info
             assert info["segments"] == len(UTTERANCES)
             assert info["downloads"] == {"video": False, "srt": False}
-            assert info["progress"]["total"] == 9
+            assert info["progress"]["total"] == 10
 
             segments = client.get(f"/api/jobs/{job_id}/segments").json()
             assert [s["text_vi"] for s in segments] == [vietnamese_for(u[2]) for u in UTTERANCES]

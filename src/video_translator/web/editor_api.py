@@ -194,12 +194,22 @@ def segment_json(manager: JobManager, job: Job, index: int) -> dict[str, Any]:
     }
 
 
-def _audio_settings(manager: JobManager, job: Job) -> dict[str, float]:
+def _stem_path(manager: JobManager, job: Job, kind: str) -> Path | None:
+    """The small playable copy of a separated part (``vocals`` or ``background``), if any."""
+    if not job.separate_voice:
+        return None
+    return _resolve_inside(manager, job, job.artifacts.get(f"{kind}_preview"))
+
+
+def _audio_settings(manager: JobManager, job: Job) -> dict[str, Any]:
     audio = effective_audio(manager.config, job.audio_overrides)
     return {
         "voice_volume": audio.voice_volume,
         "background_volume": audio.background_volume,
         "ducked_volume": audio.ducked_volume,
+        "original_voice_volume": audio.original_voice_volume,
+        # true when the voice was separated from the music: the editor then shows both parts
+        "has_stems": all(_stem_path(manager, job, k) is not None for k in ("vocals", "background")),
     }
 
 
@@ -269,6 +279,7 @@ class AudioSettingsBody(BaseModel):
     voice_volume: float
     background_volume: float
     ducked_volume: float
+    original_voice_volume: float | None = None  # only with voice separation
 
 
 class BlurBody(BaseModel):
@@ -475,15 +486,16 @@ def set_speed(
 @router.put("/api/jobs/{job_id}/audio-settings")
 def put_audio_settings(
     job_id: str, body: AudioSettingsBody, manager: JobManager = Depends(get_manager)
-) -> dict[str, float]:
-    values = body.model_dump()
+) -> dict[str, Any]:
+    values = {k: v for k, v in body.model_dump().items() if v is not None}
     for key, value in values.items():
         if not (math.isfinite(value) and 0.0 <= value <= MAX_VOLUME):
             raise InvalidEdit(f"{key.replace('_', ' ')} must be between 0 and {MAX_VOLUME:g}.")
     if values["ducked_volume"] > values["background_volume"] + 1e-9:
         raise InvalidEdit("The ducked volume cannot be louder than the background volume.")
     with manager.editing(job_id) as job:
-        job.audio_overrides = {k: float(v) for k, v in values.items()}
+        kept = {k: v for k, v in job.audio_overrides.items() if k not in values}
+        job.audio_overrides = {**kept, **{k: float(v) for k, v in values.items()}}
         return _audio_settings(manager, job)
 
 
@@ -589,7 +601,23 @@ def get_waveforms(
     result: dict[str, Any] = {"voice_rate": VOICE_PEAKS_PER_SECOND, "voice": voice}
     if index is None:
         background = None
-        path = _resolve_inside(manager, job, job.artifacts.get("audio"))
+        stems = _stem_path(manager, job, "vocals") is not None
+        parts = {
+            k: _resolve_inside(manager, job, job.artifacts.get(k)) for k in ("vocals", "background")
+        }
+        stems = stems and all(parts.values())
+        path = (
+            parts["background"]
+            if stems
+            else _resolve_inside(manager, job, job.artifacts.get("audio"))
+        )
+        if stems:
+            try:
+                duration, peaks = file_peaks(parts["vocals"], BACKGROUND_PEAKS_PER_SECOND)
+                result["voice_zh"] = {"duration": duration, "peaks": peaks}
+            except WaveformError:
+                stems = False
+        result["stems"] = stems
         if path is not None:
             try:
                 duration, peaks = file_peaks(path, BACKGROUND_PEAKS_PER_SECOND)
@@ -628,6 +656,16 @@ def media_video(job_id: str, manager: JobManager = Depends(get_manager)) -> File
 @router.get("/api/jobs/{job_id}/media/dub")
 def media_dub(job_id: str, manager: JobManager = Depends(get_manager)) -> FileResponse:
     return _media(manager, job_id, "dub")
+
+
+@router.get("/api/jobs/{job_id}/media/stem/{kind}")
+def media_stem(job_id: str, kind: str, manager: JobManager = Depends(get_manager)) -> FileResponse:
+    """A separated part (``vocals`` = Chinese voice, ``background`` = music), small aac copy."""
+    job = manager.get(job_id)
+    path = _stem_path(manager, job, kind) if kind in ("vocals", "background") else None
+    if path is None:
+        raise JobNotFound("This video has no separated voice and music.")
+    return FileResponse(path, headers=MEDIA_HEADERS)
 
 
 @router.get("/api/jobs/{job_id}/media/voice")

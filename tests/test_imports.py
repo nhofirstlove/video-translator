@@ -32,6 +32,7 @@ def test_v1_stages_order_and_build():
     names = [stage.name for stage in V1_STAGES]
     assert names == [
         "extract_audio",
+        "separate_audio",  # passes through unless the job switched voice separation on
         "transcribe",
         "translate",
         "review",
@@ -41,7 +42,6 @@ def test_v1_stages_order_and_build():
         "mix",
         "render",
     ]
-    assert "separate_audio" not in names
     assert [type(s) for s in build_stages(AppConfig())] == V1_STAGES
 
 
